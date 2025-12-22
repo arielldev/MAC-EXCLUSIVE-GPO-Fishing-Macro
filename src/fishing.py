@@ -848,6 +848,21 @@ class FishingBot:
                                             break
                                     if found_first:
                                         break
+                                
+                                # DEBUG: If not found, sample pixels to identify actual colors
+                                if not found_first and time.time() - cast_time < 2.0:  # Only log first few attempts
+                                    print(f'🔍 DEBUG: No match for target color {target_color}. Sampling pixels...')
+                                    sample_colors = {}
+                                    for row_idx in range(0, height, max(1, height // 5)):  # Sample 5 rows
+                                        for col_idx in range(0, width, max(1, width // 5)):  # Sample 5 cols
+                                            b, g, r = img[row_idx, col_idx, 0:3]
+                                            color_tuple = (r, g, b)
+                                            if color_tuple not in sample_colors:
+                                                sample_colors[color_tuple] = 0
+                                            sample_colors[color_tuple] += 1
+                                    # Print top 5 colors found
+                                    sorted_colors = sorted(sample_colors.items(), key=lambda x: x[1], reverse=True)[:5]
+                                    print(f'🔍 Top colors in bar area (RGB): {[f"({c[0][0]},{c[0][1]},{c[0][2]})" for c in sorted_colors]}')
                             except Exception as detection_error:
                                 print(f'❌ Blue bar detection error: {detection_error}')
                                 time.sleep(0.1)
