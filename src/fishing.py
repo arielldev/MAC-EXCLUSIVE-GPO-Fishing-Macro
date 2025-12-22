@@ -682,6 +682,14 @@ class FishingBot:
                         print(f'🎣 Fishing cycle #{self.app.fish_count + 1}')
                         
                         # Cast line (bait selection already done in initial setup)
+                        # Ensure mouse is not held from prior loop
+                        if self.app.is_clicking:
+                            try:
+                                self.mouse.release(pynput_mouse.Button.left)
+                            except Exception:
+                                pass
+                            self.app.is_clicking = False
+
                         self.app.set_recovery_state("casting", {"action": "initial_cast"})
                         self.cast_line()
                         cast_time = time.time()
@@ -883,6 +891,14 @@ class FishingBot:
                                     if hasattr(self.app, 'bait_manager') and self.app.bait_manager.is_enabled():
                                         print("🔄 Reselecting bait (may have run out)")
                                         self.app.bait_manager.select_top_bait()
+                                    # Ensure no mouse press sticks between casts
+                                    if self.app.is_clicking:
+                                        try:
+                                            self.mouse.release(pynput_mouse.Button.left)
+                                        except Exception:
+                                            pass
+                                        self.app.is_clicking = False
+                                    time.sleep(0.3)
                                     break
                                 
                                 if was_detecting:

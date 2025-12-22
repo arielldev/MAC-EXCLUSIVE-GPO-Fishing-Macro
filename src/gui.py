@@ -1213,11 +1213,12 @@ Sequence (per user spec):
                     print(f'❌ AUTO-PURCHASE ERROR: {e}')
 
     def cast_line(self):
-        """Perform the casting action: hold click for 1 second then release"""
+        """Perform the casting action: short tap to avoid immediate reel-in."""
         self.log('Casting line...', "verbose")
         try:
             self.mouse_controller.press(pynput_mouse.Button.left)
-            threading.Event().wait(1.0)
+            # Short press only; long hold can toggle reel-in instantly
+            threading.Event().wait(0.07)
             self.mouse_controller.release(pynput_mouse.Button.left)
         except Exception:
             pass
