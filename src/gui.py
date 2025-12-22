@@ -369,6 +369,19 @@ class HotkeyGUI:
         except:
             return 1.0
 
+    def safe_var_get(self, var, default):
+        """Safely get a Tkinter variable value, returning default if empty/invalid.
+        Prevents TclError when spinboxes are temporarily blank during edits."""
+        try:
+            # Some Tk variables can raise TclError if the widget text is "" during typing
+            val = var.get()
+            # Normalize blank strings to default
+            if isinstance(val, str) and val.strip() == "":
+                return default
+            return val
+        except Exception:
+            return default
+
     def create_widgets(self):
         # Create scrollable main container with more width
         self.create_scrollable_frame()
@@ -1459,13 +1472,17 @@ Sequence (per user spec):
         
         # Fruit storage key
         ttk.Label(frame, text='Fruit Key:').grid(row=row, column=0, sticky='e', pady=5, padx=(0, 10))
-        self.fruit_key_var = tk.IntVar(value=int(getattr(self, 'fruit_storage_key', '3')))
+        # Use StringVar to avoid TclError when field is temporarily blank
+        self.fruit_key_var = tk.StringVar(value=str(getattr(self, 'fruit_storage_key', '3')))
         fruit_key_spinbox = ttk.Spinbox(frame, from_=1, to=9, increment=1, textvariable=self.fruit_key_var, width=10)
         fruit_key_spinbox.grid(row=row, column=1, pady=5, sticky='w')
         help_btn = ttk.Button(frame, text='?', width=3)
         help_btn.grid(row=row, column=2, padx=(10, 0), pady=5)
         ToolTip(help_btn, "Select which key (1-9) to press for fruit storage")
-        self.fruit_key_var.trace_add('write', lambda *args: (setattr(self, 'fruit_storage_key', str(self.fruit_key_var.get())), self.auto_save_settings()))
+        self.fruit_key_var.trace_add('write', lambda *args: (
+            setattr(self, 'fruit_storage_key', (self.fruit_key_var.get().strip() or '3')),
+            self.auto_save_settings()
+        ))
         row += 1
         
         # Fruit point
@@ -1480,13 +1497,17 @@ Sequence (per user spec):
         
         # Rod key
         ttk.Label(frame, text='Rod Key:').grid(row=row, column=0, sticky='e', pady=5, padx=(0, 10))
-        self.rod_key_var = tk.IntVar(value=int(getattr(self, 'rod_key', '1')))
+        # Use StringVar to avoid TclError when field is temporarily blank
+        self.rod_key_var = tk.StringVar(value=str(getattr(self, 'rod_key', '1')))
         rod_key_spinbox = ttk.Spinbox(frame, from_=1, to=9, increment=1, textvariable=self.rod_key_var, width=10)
         rod_key_spinbox.grid(row=row, column=1, pady=5, sticky='w')
         help_btn = ttk.Button(frame, text='?', width=3)
         help_btn.grid(row=row, column=2, padx=(10, 0), pady=5)
         ToolTip(help_btn, "Select which key (1-9) to press for rod selection")
-        self.rod_key_var.trace_add('write', lambda *args: (setattr(self, 'rod_key', str(self.rod_key_var.get())), self.auto_save_settings()))
+        self.rod_key_var.trace_add('write', lambda *args: (
+            setattr(self, 'rod_key', (self.rod_key_var.get().strip() or '1')),
+            self.auto_save_settings()
+        ))
         row += 1
         
         # Bait point
@@ -2531,10 +2552,39 @@ Sequence (per user spec):
         if not hasattr(self, 'auto_purchase_var'):
             return  # Skip if not fully initialized
             
+        # Safely read numeric fields to avoid TclError when widgets are blank
+        auto_purchase_amount = self.safe_var_get(getattr(self, 'amount_var', None) or tk.StringVar(value=str(getattr(self, 'auto_purchase_amount', 100))), getattr(self, 'auto_purchase_amount', 100))
+        loops_per_purchase = self.safe_var_get(getattr(self, 'loops_var', None) or tk.StringVar(value=str(getattr(self, 'loops_per_purchase', 1))), getattr(self, 'loops_per_purchase', 1))
+        zoom_out_steps = self.safe_var_get(getattr(self, 'zoom_out_var', None) or tk.StringVar(value=str(5)), 5)
+        zoom_in_steps = self.safe_var_get(getattr(self, 'zoom_in_var', None) or tk.StringVar(value=str(3)), 3)
+        webhook_interval_val = self.safe_var_get(getattr(self, 'webhook_interval_var', None) or tk.StringVar(value=str(getattr(self, 'webhook_interval', 10))), getattr(self, 'webhook_interval', 10))
+
+        # Normalize string values to ints where appropriate
+        try:
+            auto_purchase_amount = int(str(auto_purchase_amount))
+        except Exception:
+            auto_purchase_amount = getattr(self, 'auto_purchase_amount', 100)
+        try:
+            loops_per_purchase = int(str(loops_per_purchase))
+        except Exception:
+            loops_per_purchase = getattr(self, 'loops_per_purchase', 1)
+        try:
+            zoom_out_steps = int(str(zoom_out_steps))
+        except Exception:
+            zoom_out_steps = 5
+        try:
+            zoom_in_steps = int(str(zoom_in_steps))
+        except Exception:
+            zoom_in_steps = 3
+        try:
+            webhook_interval_val = int(str(webhook_interval_val))
+        except Exception:
+            webhook_interval_val = getattr(self, 'webhook_interval', 10)
+
         preset_data = {
             'auto_purchase_enabled': getattr(self.auto_purchase_var, 'get', lambda: False)(),
-            'auto_purchase_amount': getattr(self.amount_var, 'get', lambda: getattr(self, 'auto_purchase_amount', 100))(),
-            'loops_per_purchase': getattr(self.loops_var, 'get', lambda: getattr(self, 'loops_per_purchase', 1))(),
+            'auto_purchase_amount': auto_purchase_amount,
+            'loops_per_purchase': loops_per_purchase,
             'point_coords': getattr(self, 'point_coords', {}),
             'fruit_coords': getattr(self, 'fruit_coords', {}),
             'fishing_location': getattr(self, 'fishing_location', None),
@@ -2548,7 +2598,7 @@ Sequence (per user spec):
             'smart_check_interval': getattr(self, 'smart_check_interval', 15.0),
             'webhook_url': getattr(self, 'webhook_url', ''),
             'webhook_enabled': getattr(self, 'webhook_enabled', False),
-            'webhook_interval': getattr(self, 'webhook_interval', 10),
+            'webhook_interval': webhook_interval_val,
             'fish_progress_webhook_enabled': getattr(self, 'fish_progress_webhook_enabled', True),
             'devil_fruit_webhook_enabled': getattr(self, 'devil_fruit_webhook_enabled', True),
             'fruit_spawn_webhook_enabled': getattr(self, 'fruit_spawn_webhook_enabled', True),
@@ -2572,8 +2622,8 @@ Sequence (per user spec):
 
             'zoom_settings': {
                 'auto_zoom_enabled': getattr(self.auto_zoom_var, 'get', lambda: False)() if hasattr(self, 'auto_zoom_var') else False,
-                'zoom_out_steps': getattr(self.zoom_out_var, 'get', lambda: 5)() if hasattr(self, 'zoom_out_var') else 5,
-                'zoom_in_steps': getattr(self.zoom_in_var, 'get', lambda: 3)() if hasattr(self, 'zoom_in_var') else 3,
+                'zoom_out_steps': zoom_out_steps,
+                'zoom_in_steps': zoom_in_steps,
                 'step_delay': 0.1,
                 'sequence_delay': 0.5,
                 'zoom_cooldown': 2.0
