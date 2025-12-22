@@ -787,6 +787,12 @@ class FishingBot:
                                 if not bar_area:
                                     # Default bar area if not set
                                     bar_area = {'x': 700, 'y': 400, 'width': 200, 'height': 100}
+                                    print(f'⚠️ WARNING: Using default bar area {bar_area} - Position overlay properly!')
+                                else:
+                                    # Only log once at start
+                                    if not detected and time.time() - cast_time < 1.0:
+                                        print(f'📍 Bar detection area: x={bar_area["x"]}, y={bar_area["y"]}, w={bar_area["width"]}, h={bar_area["height"]}')
+                                
                                 x = bar_area['x']
                                 y = bar_area['y']
                                 width = bar_area['width']
@@ -794,6 +800,11 @@ class FishingBot:
                                 monitor = {'left': x, 'top': y, 'width': width, 'height': height}
                                 screenshot = sct.grab(monitor)
                                 img = np.array(screenshot)
+                                
+                                # Convert BGRA to BGR (remove alpha channel if present)
+                                if img.shape[2] == 4:
+                                    img = img[:, :, :3]
+                                
                                 # Normalize for macOS Retina scaling
                                 img_h, img_w = img.shape[0], img.shape[1]
                                 if img_w != width or img_h != height:
@@ -812,6 +823,15 @@ class FishingBot:
                                 point1_y = None
                                 found_first = False
                                 tol = 40  # Increased tolerance for better detection
+                                
+                                # Debug: Sample center pixel colors on first scan
+                                if not detected and time.time() - cast_time < 2.0:
+                                    center_row = height // 2
+                                    center_col = width // 2
+                                    if center_row < height and center_col < width:
+                                        sample_b, sample_g, sample_r = img[center_row, center_col, 0:3]
+                                        print(f'🔍 DEBUG: Bar area center pixel (B={sample_b}, G={sample_g}, R={sample_r}), Looking for B≈{target_color[0]}, G≈{target_color[1]}, R≈{target_color[2]} (±{tol})')
+                                
                                 for row_idx in range(height):
                                     for col_idx in range(width):
                                         b, g, r = img[row_idx, col_idx, 0:3]
@@ -822,6 +842,7 @@ class FishingBot:
                                             point1_x = x + col_idx
                                             point1_y = y + row_idx
                                             found_first = True
+                                            print(f'✅ Blue bar found at pixel ({col_idx}, {row_idx}) with color (B={b}, G={g}, R={r})')
                                             break
                                     if found_first:
                                         break
@@ -895,6 +916,9 @@ class FishingBot:
                             temp_monitor = {'left': temp_area_x, 'top': y, 'width': temp_area_width, 'height': height}
                             temp_screenshot = sct.grab(temp_monitor)
                             temp_img = np.array(temp_screenshot)
+                            # Convert BGRA to BGR (remove alpha channel if present)
+                            if temp_img.shape[2] == 4:
+                                temp_img = temp_img[:, :, :3]
                             # Normalize for Retina
                             t_h, t_w = temp_img.shape[0], temp_img.shape[1]
                             if t_w != temp_area_width or t_h != height:
@@ -942,6 +966,9 @@ class FishingBot:
                             real_monitor = {'left': real_x, 'top': real_y, 'width': real_width, 'height': real_height}
                             real_screenshot = sct.grab(real_monitor)
                             real_img = np.array(real_screenshot)
+                            # Convert BGRA to BGR (remove alpha channel if present)
+                            if real_img.shape[2] == 4:
+                                real_img = real_img[:, :, :3]
                             # Normalize for Retina
                             r_h, r_w = real_img.shape[0], real_img.shape[1]
                             if r_w != real_width or r_h != real_height:
@@ -1242,6 +1269,9 @@ class FishingBot:
                 }
                 screenshot = sct.grab(monitor)
                 img = np.array(screenshot)
+                # Convert BGRA to BGR (remove alpha channel if present)
+                if img.shape[2] == 4:
+                    img = img[:, :, :3]
             
             # Extract text using OCR from drop layout area
             if hasattr(self.app, 'ocr_manager'):
