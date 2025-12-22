@@ -119,9 +119,11 @@ class OverlayManager:
     
     def _update_cursor(self, event):
         edge = self._get_resize_edge(event.x, event.y)
-        cursor_map = {'nw': 'size_nw_se', 'ne': 'size_ne_sw', 'sw': 'size_ne_sw', 
-                     'se': 'size_nw_se', 'n': 'size_ns', 's': 'size_ns', 
-                     'e': 'size_we', 'w': 'size_we', None: 'arrow'}
+        # Use cross-platform cursor names compatible with macOS
+        cursor_map = {'nw': 'top_left_corner', 'ne': 'top_right_corner', 
+                     'sw': 'bottom_left_corner', 'se': 'bottom_right_corner', 
+                     'n': 'sb_v_double_arrow', 's': 'sb_v_double_arrow', 
+                     'e': 'sb_h_double_arrow', 'w': 'sb_h_double_arrow', None: 'arrow'}
         self.window.config(cursor=cursor_map.get(edge, 'arrow'))
     
     def _start_action(self, event):
