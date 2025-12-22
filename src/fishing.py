@@ -639,8 +639,7 @@ class FishingBot:
     def run_main_loop(self, skip_initial_setup=False):
         """Main fishing loop with enhanced smart detection and control"""
         print('🎣 Main loop started with enhanced smart detection')
-        # Light blue/cyan bar color from game screenshots: RGB (130, 220, 255) -> BGR (255, 220, 130)
-        target_color = (255, 220, 130)  # BGR order - light cyan/blue fishing bar
+        target_color = (85, 170, 255)  
         dark_color = (25, 25, 25)
         white_color = (255, 255, 255)
         
