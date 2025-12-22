@@ -639,8 +639,8 @@ class FishingBot:
     def run_main_loop(self, skip_initial_setup=False):
         """Main fishing loop with enhanced smart detection and control"""
         print('🎣 Main loop started with enhanced smart detection')
-        # Blue bar color: RGB (85, 170, 255) -> BGR for numpy arrays (255, 170, 85)
-        target_color = (255, 170, 85)  # BGR order for numpy array indexing
+        # Light blue/cyan bar color from game screenshots: RGB (130, 220, 255) -> BGR (255, 220, 130)
+        target_color = (255, 220, 130)  # BGR order - light cyan/blue fishing bar
         dark_color = (25, 25, 25)
         white_color = (255, 255, 255)
         
@@ -822,27 +822,44 @@ class FishingBot:
                                 point1_x = None
                                 point1_y = None
                                 found_first = False
-                                tol = 40  # Increased tolerance for better detection
+                                tol = 60  # Increased tolerance for light blue detection
                                 
-                                # Debug: Sample center pixel colors on first scan
+                                # Debug: Sample multiple pixels on first scan to find the bar
                                 if not detected and time.time() - cast_time < 2.0:
                                     center_row = height // 2
                                     center_col = width // 2
                                     if center_row < height and center_col < width:
                                         sample_b, sample_g, sample_r = img[center_row, center_col, 0:3]
                                         print(f'🔍 DEBUG: Bar area center pixel (B={sample_b}, G={sample_g}, R={sample_r}), Looking for B≈{target_color[0]}, G≈{target_color[1]}, R≈{target_color[2]} (±{tol})')
+                                        # Sample a few more points to see the color range
+                                        sample_points = [(height//4, width//2), (3*height//4, width//2), (height//2, width//4), (height//2, 3*width//4)]
+                                        for sr, sc in sample_points:
+                                            if sr < height and sc < width:
+                                                sb, sg, sr_val = img[sr, sc, 0:3]
+                                                brightness = int(sb) + int(sg) + int(sr_val)
+                                                if brightness > 300:  # Highlight bright pixels
+                                                    print(f'   💡 Bright pixel at ({sc}, {sr}): B={sb}, G={sg}, R={sr_val}, brightness={brightness}')
                                 
+                                # Scan for light blue bar - prioritize bright pixels
                                 for row_idx in range(height):
                                     for col_idx in range(width):
                                         b, g, r = img[row_idx, col_idx, 0:3]
-                                        # target_color is now (B, G, R) from BGR extraction
-                                        if (abs(b - target_color[0]) <= tol and
-                                            abs(g - target_color[1]) <= tol and
-                                            abs(r - target_color[2]) <= tol):
+                                        
+                                        # Method 1: Direct color match with tolerance
+                                        color_match = (abs(b - target_color[0]) <= tol and
+                                                      abs(g - target_color[1]) <= tol and
+                                                      abs(r - target_color[2]) <= tol)
+                                        
+                                        # Method 2: Brightness + blue-ish hue detection (backup)
+                                        brightness = int(b) + int(g) + int(r)
+                                        is_bright = brightness > 400  # Bright pixel
+                                        is_blueish = b > 200 and (b > r * 1.2)  # High blue channel, more blue than red
+                                        
+                                        if color_match or (is_bright and is_blueish):
                                             point1_x = x + col_idx
                                             point1_y = y + row_idx
                                             found_first = True
-                                            print(f'✅ Blue bar found at pixel ({col_idx}, {row_idx}) with color (B={b}, G={g}, R={r})')
+                                            print(f'✅ Blue bar found at pixel ({col_idx}, {row_idx}) with color (B={b}, G={g}, R={r}), brightness={brightness}')
                                             break
                                     if found_first:
                                         break
