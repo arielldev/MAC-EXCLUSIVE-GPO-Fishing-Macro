@@ -639,7 +639,7 @@ class FishingBot:
     def run_main_loop(self, skip_initial_setup=False):
         """Main fishing loop with enhanced smart detection and control"""
         print('🎣 Main loop started with enhanced smart detection')
-        target_color = (85, 170, 255)  
+        target_color = (69, 136, 229)  # (R, G, B) order - actual fishing bar color detected
         dark_color = (25, 25, 25)
         white_color = (255, 255, 255)
         
