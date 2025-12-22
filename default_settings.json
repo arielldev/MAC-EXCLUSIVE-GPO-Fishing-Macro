@@ -1,0 +1,108 @@
+{
+  "auto_purchase_enabled": false,
+  "auto_purchase_amount": 10,
+  "loops_per_purchase": 10,
+  "point_coords": {
+    "1": [
+      801,
+      939
+    ],
+    "2": [
+      957,
+      941
+    ],
+    "3": [
+      1111,
+      940
+    ]
+  },
+  "fruit_coords": {
+    "fruit_point": [
+      950,
+      832
+    ],
+    "bait_point": [
+      953,
+      772
+    ]
+  },
+  "fishing_location": [
+    937,
+    383
+  ],
+  "fruit_storage_enabled": true,
+  "fruit_storage_key": "2",
+  "rod_key": "1",
+  "kp": 0.1,
+  "kd": 0.5,
+  "scan_timeout": 14.0,
+  "wait_after_loss": 1.0,
+  "smart_check_interval": 15.0,
+  "webhook_url": "",
+  "webhook_enabled": false,
+  "webhook_interval": 11,
+  "fish_progress_webhook_enabled": true,
+  "devil_fruit_webhook_enabled": true,
+  "fruit_spawn_webhook_enabled": true,
+  "purchase_webhook_enabled": true,
+  "recovery_webhook_enabled": true,
+  "bait_webhook_enabled": true,
+  "ocr_performance_mode": "fast",
+  "auto_bait_enabled": true,
+  "top_bait_coords": [],
+  "window_width": 420,
+  "window_height": 756,
+  "dark_theme": true,
+  "current_theme": "dark",
+  "layout_settings": {
+    "bar": {
+      "name": "BAR LAYOUT",
+      "color": [
+        85,
+        170,
+        255
+      ],
+      "border_color": [
+        0,
+        100,
+        200
+      ],
+      "area": {
+        "x": 1000,
+        "y": 371,
+        "width": 263,
+        "height": 472
+      },
+      "description": "Fishing Bar Detection"
+    },
+    "drop": {
+      "name": "DROP LAYOUT",
+      "color": [
+        85,
+        255,
+        85
+      ],
+      "border_color": [
+        0,
+        200,
+        0
+      ],
+      "area": {
+        "x": 705,
+        "y": 76,
+        "width": 497,
+        "height": 122
+      },
+      "description": "Loot Drop Recognition"
+    }
+  },
+  "zoom_settings": {
+    "auto_zoom_enabled": true,
+    "zoom_out_steps": 5,
+    "zoom_in_steps": 8,
+    "step_delay": 0.1,
+    "sequence_delay": 0.5,
+    "zoom_cooldown": 2.0
+  },
+  "last_saved": "2025-12-10T20:22:08.906252"
+}

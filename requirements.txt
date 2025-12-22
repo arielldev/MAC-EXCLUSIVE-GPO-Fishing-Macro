@@ -1,0 +1,7 @@
+pillow
+mss
+numpy
+opencv-python
+easyocr
+pynput
+requests

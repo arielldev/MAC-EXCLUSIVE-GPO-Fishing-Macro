@@ -1,0 +1,24 @@
+# Color scheme for GPO Fishing Macro
+
+# Primary colors
+primary_blue = #55aaff
+primary_dark = #1a1a1a
+primary_light = #2a2a2a
+
+# Status colors
+status_active = #00ff00
+status_inactive = #ff0000
+status_warning = #ffaa00
+
+# UI colors
+background = #1a1a1a
+foreground = #ffffff
+border = #3a3a3a
+highlight = #55aaff
+
+# Text colors
+text_normal = #ffffff
+text_dim = #888888
+text_success = green
+text_error = red
+text_info = blue
