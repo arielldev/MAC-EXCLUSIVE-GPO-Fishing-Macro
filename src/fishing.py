@@ -829,29 +829,32 @@ class FishingBot:
                                 time.sleep(0.1)
                                 continue
                             
-                            # Look for blue bar (target color) - EXACT MATCH ONLY, no loose backup detection
+                            # Look for blue bar (target color) - with small tolerance for Retina color profile shifts
                             try:
                                 point1_x = None
                                 point1_y = None
                                 found_first = False
+                                tolerance = 5  # Allow ±5 variance per channel for Retina display color shifts
                                 
-                                # Scan for exact color match (no tolerance, no backup detection)
+                                # Scan for color match with tolerance
                                 for row_idx in range(height):
                                     for col_idx in range(width):
                                         b, g, r = img[row_idx, col_idx, 0:3]
-                                        # Exact match only
-                                        if r == target_color[0] and g == target_color[1] and b == target_color[2]:
+                                        # Match with tolerance to handle Retina color profile shifts
+                                        if (abs(r - target_color[0]) <= tolerance and 
+                                            abs(g - target_color[1]) <= tolerance and 
+                                            abs(b - target_color[2]) <= tolerance):
                                             point1_x = x + col_idx
                                             point1_y = y + row_idx
                                             found_first = True
-                                            print(f'✅ Blue bar found at pixel ({col_idx}, {row_idx}) with color (B={b}, G={g}, R={r})')
+                                            print(f'✅ Blue bar found at pixel ({col_idx}, {row_idx}) with color (R={r},G={g},B={b})')
                                             break
                                     if found_first:
                                         break
                                 
                                 # DEBUG: If not found, sample pixels to identify actual colors
                                 if not found_first and time.time() - cast_time < 2.0:  # Only log first few attempts
-                                    print(f'🔍 DEBUG: No match for target color {target_color}. Sampling pixels...')
+                                    print(f'🔍 DEBUG: No match for target color {target_color} (tolerance±{tolerance}). Sampling pixels...')
                                     sample_colors = {}
                                     for row_idx in range(0, height, max(1, height // 5)):  # Sample 5 rows
                                         for col_idx in range(0, width, max(1, width // 5)):  # Sample 5 cols
@@ -922,12 +925,14 @@ class FishingBot:
                                 time.sleep(0.1)
                                 continue
                             
-                            # Find right edge of blue bar (exact match only)
+                            # Find right edge of blue bar (with tolerance for Retina)
                             point2_x = None
                             row_idx = point1_y - y
                             for col_idx in range(width - 1, -1, -1):
                                 b, g, r = img[row_idx, col_idx, 0:3]
-                                if r == target_color[0] and g == target_color[1] and b == target_color[2]:
+                                if (abs(r - target_color[0]) <= tolerance and 
+                                    abs(g - target_color[1]) <= tolerance and 
+                                    abs(b - target_color[2]) <= tolerance):
                                     point2_x = x + col_idx
                                     break
 
