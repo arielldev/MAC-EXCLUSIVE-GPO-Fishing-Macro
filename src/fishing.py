@@ -552,14 +552,14 @@ class FishingBot:
                 for col_idx in range(real_width):
                     b, g, r = img[row_idx, col_idx, 0:3]
                     
-                    # Count target color (blue bar)
-                    if r == target_color[0] and g == target_color[1] and b == target_color[2]:
+                    # Count target color (blue bar) - BGR order
+                    if b == target_color[0] and g == target_color[1] and r == target_color[2]:
                         blue_pixels += 1
-                    # Count dark areas (fish zones)
-                    elif r == dark_color[0] and g == dark_color[1] and b == dark_color[2]:
+                    # Count dark areas (fish zones) - BGR order
+                    elif b == dark_color[0] and g == dark_color[1] and r == dark_color[2]:
                         dark_pixels += 1
-                    # Count white areas (indicator)
-                    elif r == white_color[0] and g == white_color[1] and b == white_color[2]:
+                    # Count white areas (indicator) - BGR order
+                    elif b == white_color[0] and g == white_color[1] and r == white_color[2]:
                         white_pixels += 1
             
             # Calculate confidence metrics
@@ -639,7 +639,8 @@ class FishingBot:
     def run_main_loop(self, skip_initial_setup=False):
         """Main fishing loop with enhanced smart detection and control"""
         print('🎣 Main loop started with enhanced smart detection')
-        target_color = (85, 170, 255)
+        # Blue bar color: RGB (85, 170, 255) -> BGR for numpy arrays (255, 170, 85)
+        target_color = (255, 170, 85)  # BGR order for numpy array indexing
         dark_color = (25, 25, 25)
         white_color = (255, 255, 255)
         
@@ -810,13 +811,14 @@ class FishingBot:
                                 point1_x = None
                                 point1_y = None
                                 found_first = False
-                                tol = 25  # color tolerance
+                                tol = 40  # Increased tolerance for better detection
                                 for row_idx in range(height):
                                     for col_idx in range(width):
                                         b, g, r = img[row_idx, col_idx, 0:3]
-                                        if (abs(r - target_color[0]) <= tol and
+                                        # target_color is now (B, G, R) from BGR extraction
+                                        if (abs(b - target_color[0]) <= tol and
                                             abs(g - target_color[1]) <= tol and
-                                            abs(b - target_color[2]) <= tol):
+                                            abs(r - target_color[2]) <= tol):
                                             point1_x = x + col_idx
                                             point1_y = y + row_idx
                                             found_first = True
@@ -879,7 +881,7 @@ class FishingBot:
                             row_idx = point1_y - y
                             for col_idx in range(width - 1, -1, -1):
                                 b, g, r = img[row_idx, col_idx, 0:3]
-                                if r == target_color[0] and g == target_color[1] and b == target_color[2]:
+                                if b == target_color[0] and g == target_color[1] and r == target_color[2]:
                                     point2_x = x + col_idx
                                     break
                             

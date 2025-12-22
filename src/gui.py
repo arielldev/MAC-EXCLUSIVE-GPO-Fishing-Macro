@@ -179,9 +179,6 @@ class HotkeyGUI:
         self.rod_key = '1'  # Default rod key
         self.fruit_coords = {}  # Store fruit and bait point coordinates
         
-        # Update manager - will be initialized after GUI is ready
-        self.update_manager = None
-        
         # Performance settings
         self.silent_mode = False  # Reduce console logging
         self.verbose_logging = False  # Detailed logging for debugging
@@ -313,20 +310,6 @@ class HotkeyGUI:
         
         # Bind window resize event to save size
         self.root.bind('<Configure>', self.on_window_resize)
-        
-
-        
-        # Initialize UpdateManager after GUI is ready
-        try:
-            try:
-                from src.updater import UpdateManager
-            except ImportError:
-                from updater import UpdateManager
-            self.update_manager = UpdateManager(self)
-            print("✅ Simple UpdateManager initialized")
-        except Exception as e:
-            print(f"❌ Failed to initialize UpdateManager: {e}")
-            self.update_manager = None
     
     def create_scrollable_frame(self):
         """Create a modern scrollable frame using tkinter Canvas and Scrollbar"""
@@ -434,18 +417,6 @@ class HotkeyGUI:
                                       command=self.open_settings_window, style='TButton')
         self.settings_btn.pack(side=tk.LEFT, padx=(0, 8))
         ToolTip(self.settings_btn, "Open timing settings and theme options")
-        
-        # Right controls - removed Load button, only auto-save now
-        right_controls = ttk.Frame(control_panel)
-        right_controls.grid(row=0, column=2, sticky='e')
-        
-        # Manual update button
-        self.update_btn = ttk.Button(right_controls, text='🔄 Update', 
-                                    command=self.check_for_updates, style='TButton')
-        self.update_btn.pack(side=tk.LEFT, padx=(0, 8))
-        ToolTip(self.update_btn, "Check for and install updates from GitHub")
-        
-
         
         current_row += 1
         
@@ -2217,16 +2188,6 @@ Sequence (per user spec):
             self.status_msg.config(text='Opened Discord invite', foreground='#0DA50DFF')
         except Exception as e:
             self.status_msg.config(text=f'Error opening Discord: {e}', foreground='red')
-
-    def check_for_updates(self):
-        """Manual update check triggered by user"""
-        if not self.update_manager:
-            self.update_status('UpdateManager not available', 'error', '❌')
-            return
-        
-        # Run update check in background thread
-        threading.Thread(target=self.update_manager.check_for_updates_manual, daemon=True).start()
-
 
     
     def update_status(self, message, status_type='info', icon=''):
