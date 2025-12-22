@@ -2,6 +2,7 @@ import threading
 import time
 import mss
 import numpy as np
+import cv2
 from pynput import mouse as pynput_mouse
 from pynput import keyboard as pynput_keyboard
 from pynput.keyboard import Key
@@ -12,6 +13,7 @@ class FishingBot:
         # macOS controllers (use app's controllers if available)
         self.mouse = getattr(app, 'mouse_controller', pynput_mouse.Controller())
         self.keyboard = getattr(app, 'keyboard_controller', pynput_keyboard.Controller())
+        self._retina_scale = 1.0
         self.recovery_in_progress = False
         self.watchdog_active = False
         self.watchdog_thread = None
@@ -791,6 +793,13 @@ class FishingBot:
                                 monitor = {'left': x, 'top': y, 'width': width, 'height': height}
                                 screenshot = sct.grab(monitor)
                                 img = np.array(screenshot)
+                                # Normalize for macOS Retina scaling
+                                img_h, img_w = img.shape[0], img.shape[1]
+                                if img_w != width or img_h != height:
+                                    scale_w = img_w / float(width)
+                                    scale_h = img_h / float(height)
+                                    self._retina_scale = (scale_w + scale_h) / 2.0
+                                    img = cv2.resize(img, (width, height), interpolation=cv2.INTER_NEAREST)
                             except Exception as screenshot_error:
                                 print(f'❌ Screenshot error: {screenshot_error}')
                                 time.sleep(0.1)
@@ -801,10 +810,13 @@ class FishingBot:
                                 point1_x = None
                                 point1_y = None
                                 found_first = False
+                                tol = 25  # color tolerance
                                 for row_idx in range(height):
                                     for col_idx in range(width):
                                         b, g, r = img[row_idx, col_idx, 0:3]
-                                        if r == target_color[0] and g == target_color[1] and b == target_color[2]:
+                                        if (abs(r - target_color[0]) <= tol and
+                                            abs(g - target_color[1]) <= tol and
+                                            abs(b - target_color[2]) <= tol):
                                             point1_x = x + col_idx
                                             point1_y = y + row_idx
                                             found_first = True
@@ -881,6 +893,10 @@ class FishingBot:
                             temp_monitor = {'left': temp_area_x, 'top': y, 'width': temp_area_width, 'height': height}
                             temp_screenshot = sct.grab(temp_monitor)
                             temp_img = np.array(temp_screenshot)
+                            # Normalize for Retina
+                            t_h, t_w = temp_img.shape[0], temp_img.shape[1]
+                            if t_w != temp_area_width or t_h != height:
+                                temp_img = cv2.resize(temp_img, (temp_area_width, height), interpolation=cv2.INTER_NEAREST)
                             
                             # Find top and bottom of dark area
                             top_y = None
@@ -888,7 +904,9 @@ class FishingBot:
                                 found_dark = False
                                 for col_idx in range(temp_area_width):
                                     b, g, r = temp_img[row_idx, col_idx, 0:3]
-                                    if r == dark_color[0] and g == dark_color[1] and b == dark_color[2]:
+                                    if (abs(r - dark_color[0]) <= 20 and
+                                        abs(g - dark_color[1]) <= 20 and
+                                        abs(b - dark_color[2]) <= 20):
                                         top_y = y + row_idx
                                         found_dark = True
                                         break
@@ -900,7 +918,9 @@ class FishingBot:
                                 found_dark = False
                                 for col_idx in range(temp_area_width):
                                     b, g, r = temp_img[row_idx, col_idx, 0:3]
-                                    if r == dark_color[0] and g == dark_color[1] and b == dark_color[2]:
+                                    if (abs(r - dark_color[0]) <= 20 and
+                                        abs(g - dark_color[1]) <= 20 and
+                                        abs(b - dark_color[2]) <= 20):
                                         bottom_y = y + row_idx
                                         found_dark = True
                                         break
@@ -920,6 +940,10 @@ class FishingBot:
                             real_monitor = {'left': real_x, 'top': real_y, 'width': real_width, 'height': real_height}
                             real_screenshot = sct.grab(real_monitor)
                             real_img = np.array(real_screenshot)
+                            # Normalize for Retina
+                            r_h, r_w = real_img.shape[0], real_img.shape[1]
+                            if r_w != real_width or r_h != real_height:
+                                real_img = cv2.resize(real_img, (real_width, real_height), interpolation=cv2.INTER_NEAREST)
                             
                             # Skip validation for now - keep it simple
                             
@@ -929,7 +953,9 @@ class FishingBot:
                             for row_idx in range(real_height):
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
-                                    if r == white_color[0] and g == white_color[1] and b == white_color[2]:
+                                    if (abs(r - white_color[0]) <= 30 and
+                                        abs(g - white_color[1]) <= 30 and
+                                        abs(b - white_color[2]) <= 30):
                                         white_top_y = real_y + row_idx
                                         break
                                 if white_top_y is not None:
@@ -938,7 +964,9 @@ class FishingBot:
                             for row_idx in range(real_height - 1, -1, -1):
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
-                                    if r == white_color[0] and g == white_color[1] and b == white_color[2]:
+                                    if (abs(r - white_color[0]) <= 30 and
+                                        abs(g - white_color[1]) <= 30 and
+                                        abs(b - white_color[2]) <= 30):
                                         white_bottom_y = real_y + row_idx
                                         break
                                 if white_bottom_y is not None:
@@ -956,7 +984,9 @@ class FishingBot:
                                 has_dark = False
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
-                                    if r == dark_color[0] and g == dark_color[1] and b == dark_color[2]:
+                                    if (abs(r - dark_color[0]) <= 20 and
+                                        abs(g - dark_color[1]) <= 20 and
+                                        abs(b - dark_color[2]) <= 20):
                                         has_dark = True
                                         break
                                 if has_dark:

@@ -27,13 +27,13 @@ From the project root directory:
 **Development mode (with console, macOS):**
 
 ```
-python src/main.py
-```
-
-or use the shell script:
-
-```
 ./run_dev.sh
+```
+
+or explicitly use the venv Python:
+
+```
+./.venv/bin/python src/main.py
 ```
 
 **Silent mode (no console, macOS):**
@@ -48,12 +48,12 @@ or use the shell script:
 ./run.sh
 ```
 
-## Building Executable
+## Building Application
 
 Use the provided shell script:
 
 ```
-./MakeItExe.sh
+./MakeItAPP.sh
 ```
 
 This will create a standalone executable in the `dist/` folder.

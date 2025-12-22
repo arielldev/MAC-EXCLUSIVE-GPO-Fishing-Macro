@@ -7,17 +7,17 @@ echo "  GPO Autofish - Starting (macOS)"
 echo "========================================"
 echo
 
-# Activate venv if exists
-if [ -f .venv/bin/activate ]; then
-  # shellcheck disable=SC1091
-  source .venv/bin/activate
-  echo "✓ Virtual environment activated"
+# Prefer venv python if present
+PY="python3"
+if [ -x .venv/bin/python ]; then
+  PY="./.venv/bin/python"
+  echo "✓ Using venv Python: ${PY}"
 else
   echo "⚠️ Virtual environment not found - using system Python"
 fi
 
 echo "Starting in background (silent)..."
-nohup python3 src/main.py >/dev/null 2>&1 &
+nohup "$PY" src/main.py >/dev/null 2>&1 &
 PID=$!
 echo "✅ Macro started (PID: $PID)."
 echo "Use 'kill $PID' to stop."

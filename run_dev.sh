@@ -7,14 +7,14 @@ echo "  GPO Autofish - Development Mode (macOS)"
 echo "========================================"
 echo
 
-# Activate venv if exists
-if [ -f .venv/bin/activate ]; then
-  # shellcheck disable=SC1091
-  source .venv/bin/activate
-  echo "✓ Virtual environment activated"
+# Prefer venv python if present
+PY="python3"
+if [ -x .venv/bin/python ]; then
+  PY="./.venv/bin/python"
+  echo "✓ Using venv Python: ${PY}"
 else
   echo "⚠️ Virtual environment not found - using system Python"
 fi
 
 echo "Starting with console output..."
-python3 src/main.py
+"$PY" src/main.py
