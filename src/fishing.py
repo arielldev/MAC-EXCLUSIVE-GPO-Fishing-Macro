@@ -830,49 +830,22 @@ class FishingBot:
                                 time.sleep(0.1)
                                 continue
                             
-                            # Look for blue bar (target color) with error handling
+                            # Look for blue bar (target color) - EXACT MATCH ONLY, no loose backup detection
                             try:
                                 point1_x = None
                                 point1_y = None
                                 found_first = False
-                                tol = 60  # Increased tolerance for light blue detection
                                 
-                                # Debug: Sample multiple pixels on first scan to find the bar
-                                if not detected and time.time() - cast_time < 2.0:
-                                    center_row = height // 2
-                                    center_col = width // 2
-                                    if center_row < height and center_col < width:
-                                        sample_b, sample_g, sample_r = img[center_row, center_col, 0:3]
-                                        print(f'🔍 DEBUG: Bar area center pixel (B={sample_b}, G={sample_g}, R={sample_r}), Looking for B≈{target_color[0]}, G≈{target_color[1]}, R≈{target_color[2]} (±{tol})')
-                                        # Sample a few more points to see the color range
-                                        sample_points = [(height//4, width//2), (3*height//4, width//2), (height//2, width//4), (height//2, 3*width//4)]
-                                        for sr, sc in sample_points:
-                                            if sr < height and sc < width:
-                                                sb, sg, sr_val = img[sr, sc, 0:3]
-                                                brightness = int(sb) + int(sg) + int(sr_val)
-                                                if brightness > 300:  # Highlight bright pixels
-                                                    print(f'   💡 Bright pixel at ({sc}, {sr}): B={sb}, G={sg}, R={sr_val}, brightness={brightness}')
-                                
-                                # Scan for light blue bar - prioritize bright pixels
+                                # Scan for exact color match (no tolerance, no backup detection)
                                 for row_idx in range(height):
                                     for col_idx in range(width):
                                         b, g, r = img[row_idx, col_idx, 0:3]
-                                        
-                                        # Method 1: Direct color match with tolerance
-                                        color_match = (abs(b - target_color[0]) <= tol and
-                                                      abs(g - target_color[1]) <= tol and
-                                                      abs(r - target_color[2]) <= tol)
-                                        
-                                        # Method 2: Brightness + blue-ish hue detection (backup)
-                                        brightness = int(b) + int(g) + int(r)
-                                        is_bright = brightness > 400  # Bright pixel
-                                        is_blueish = b > 200 and (b > r * 1.2)  # High blue channel, more blue than red
-                                        
-                                        if color_match or (is_bright and is_blueish):
+                                        # Exact match only
+                                        if r == target_color[0] and g == target_color[1] and b == target_color[2]:
                                             point1_x = x + col_idx
                                             point1_y = y + row_idx
                                             found_first = True
-                                            print(f'✅ Blue bar found at pixel ({col_idx}, {row_idx}) with color (B={b}, G={g}, R={r}), brightness={brightness}')
+                                            print(f'✅ Blue bar found at pixel ({col_idx}, {row_idx}) with color (B={b}, G={g}, R={r})')
                                             break
                                     if found_first:
                                         break
@@ -935,29 +908,35 @@ class FishingBot:
                                 time.sleep(0.1)
                                 continue
                             
-                            # Find right edge of blue bar (use tolerant match, not exact)
+                            # Find right edge of blue bar (exact match only)
                             point2_x = None
                             row_idx = point1_y - y
                             for col_idx in range(width - 1, -1, -1):
                                 b, g, r = img[row_idx, col_idx, 0:3]
-                                color_match = (abs(b - target_color[0]) <= tol and
-                                               abs(g - target_color[1]) <= tol and
-                                               abs(r - target_color[2]) <= tol)
-                                brightness = int(b) + int(g) + int(r)
-                                is_bright = brightness > 400
-                                is_blueish = b > 200 and (b > r * 1.2)
-                                if color_match or (is_bright and is_blueish):
+                                if r == target_color[0] and g == target_color[1] and b == target_color[2]:
                                     point2_x = x + col_idx
                                     break
 
                             # As a fallback, assume a thin bar if we couldn't find the right edge
                             if point2_x is None:
                                 point2_x = min(x + width - 1, point1_x + 3)
+                                detected_bar_width = point2_x - point1_x + 1
+                                # Reject bars that are too narrow (likely false positives)
+                                if detected_bar_width < 10:
+                                    print(f"⚠️ Detected bar too narrow ({detected_bar_width}px); likely false positive at ({point1_x}, {point1_y}). Skipping.")
+                                    time.sleep(0.1)
+                                    continue
                                 print(f"⚠️ Right edge not found; using fallback width from {point1_x} to {point2_x}")
                             
                             # Get the fishing bar area
                             temp_area_x = point1_x
                             temp_area_width = max(1, point2_x - point1_x + 1)
+                            
+                            # Final sanity check on bar width
+                            if temp_area_width < 10:
+                                print(f"⚠️ Final bar width too narrow ({temp_area_width}px); skipping detection.")
+                                time.sleep(0.1)
+                                continue
                             temp_monitor = {'left': temp_area_x, 'top': y, 'width': temp_area_width, 'height': height}
                             temp_screenshot = sct.grab(temp_monitor)
                             temp_img = np.array(temp_screenshot)
