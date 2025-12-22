@@ -914,22 +914,29 @@ class FishingBot:
                                 time.sleep(0.1)
                                 continue
                             
-                            # Find right edge of blue bar
+                            # Find right edge of blue bar (use tolerant match, not exact)
                             point2_x = None
                             row_idx = point1_y - y
                             for col_idx in range(width - 1, -1, -1):
                                 b, g, r = img[row_idx, col_idx, 0:3]
-                                if b == target_color[0] and g == target_color[1] and r == target_color[2]:
+                                color_match = (abs(b - target_color[0]) <= tol and
+                                               abs(g - target_color[1]) <= tol and
+                                               abs(r - target_color[2]) <= tol)
+                                brightness = int(b) + int(g) + int(r)
+                                is_bright = brightness > 400
+                                is_blueish = b > 200 and (b > r * 1.2)
+                                if color_match or (is_bright and is_blueish):
                                     point2_x = x + col_idx
                                     break
-                            
+
+                            # As a fallback, assume a thin bar if we couldn't find the right edge
                             if point2_x is None:
-                                time.sleep(0.1)
-                                continue
+                                point2_x = min(x + width - 1, point1_x + 3)
+                                print(f"⚠️ Right edge not found; using fallback width from {point1_x} to {point2_x}")
                             
                             # Get the fishing bar area
                             temp_area_x = point1_x
-                            temp_area_width = point2_x - point1_x + 1
+                            temp_area_width = max(1, point2_x - point1_x + 1)
                             temp_monitor = {'left': temp_area_x, 'top': y, 'width': temp_area_width, 'height': height}
                             temp_screenshot = sct.grab(temp_monitor)
                             temp_img = np.array(temp_screenshot)
@@ -1021,6 +1028,9 @@ class FishingBot:
                             if white_top_y is not None and white_bottom_y is not None:
                                 white_height = white_bottom_y - white_top_y + 1
                                 max_gap = white_height * 2
+                            else:
+                                # Debug why control didn't start
+                                print(f"⚠️ White indicator not found (top={white_top_y}, bottom={white_bottom_y}) in real area w={real_width}, h={real_height}")
                             
                             # Find dark sections (fish position)
                             dark_sections = []
@@ -1088,6 +1098,12 @@ class FishingBot:
                                         except Exception:
                                             pass
                                         self.app.is_clicking = False
+                            else:
+                                # More debug to surface why control didn't run
+                                if not dark_sections:
+                                    print(f"⚠️ No dark sections detected in real area; bar width={real_width}, height={real_height}")
+                                if white_top_y is None:
+                                    print("⚠️ Missing white indicator; cannot compute error")
                             
                             time.sleep(0.1)
                         
