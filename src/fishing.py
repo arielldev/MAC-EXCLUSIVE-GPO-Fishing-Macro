@@ -693,6 +693,11 @@ class FishingBot:
                         self.app.set_recovery_state("fishing", {"action": "blue_bar_detection"})
                         detected = False
                         was_detecting = False
+                        # Require a stable detection window before enabling clicks
+                        control_armed = False
+                        stable_frames = 0
+                        first_detection_time = None
+                        MIN_CONTROL_DELAY = 0.6  # seconds to wait after cast before any click
                         print('Scanning for blue fishing bar...')
                         
                         detection_start_time = time.time()
@@ -1062,28 +1067,45 @@ class FishingBot:
                                 section_end = real_y + real_height - 1 - gap_counter
                                 dark_sections.append({'start': current_section_start, 'end': section_end, 'middle': (current_section_start + section_end) // 2})
                             
-                            # Enhanced smart fishing control
+                            # Enhanced smart fishing control with arming to avoid instant reel-in
                             if dark_sections and white_top_y is not None:
-                                if not was_detecting:
-                                    # First time detecting fish - don't increment counter yet
+                                # Build stability before arming control
+                                if first_detection_time is None:
+                                    first_detection_time = time.time()
+                                stable_frames += 1
+
+                                if (not control_armed and
+                                    stable_frames >= 3 and
+                                    time.time() - cast_time >= MIN_CONTROL_DELAY):
+                                    control_armed = True
+                                    was_detecting = True
                                     print('Fish detected! Starting control...')
                                     self.app.set_recovery_state("fishing", {"action": "fish_control_active"})
-                                was_detecting = True
-                                
-                                # Original simple control logic (BACK TO WORKING VERSION)
+
+                                if not control_armed:
+                                    # Ensure we are not holding mouse before arming
+                                    if self.app.is_clicking:
+                                        try:
+                                            self.mouse.release(pynput_mouse.Button.left)
+                                        except Exception:
+                                            pass
+                                        self.app.is_clicking = False
+                                    time.sleep(0.05)
+                                    continue
+
+                                # PD control once armed
                                 for section in dark_sections:
                                     section['size'] = section['end'] - section['start'] + 1
                                 largest_section = max(dark_sections, key=lambda s: s['size'])
-                                
+
                                 raw_error = largest_section['middle'] - white_top_y
                                 normalized_error = raw_error / real_height if real_height > 0 else raw_error
                                 derivative = normalized_error - self.app.previous_error
                                 self.app.previous_error = normalized_error
                                 pd_output = self.app.kp * normalized_error + self.app.kd * derivative
-                                
+
                                 print(f'Error: {raw_error}px, PD: {pd_output:.2f}')
-                                
-                                # Original simple control logic
+
                                 if pd_output > 0:
                                     if not self.app.is_clicking:
                                         try:
