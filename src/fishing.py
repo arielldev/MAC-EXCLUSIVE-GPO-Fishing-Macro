@@ -1257,7 +1257,7 @@ class FishingBot:
                                 self.app.previous_error = normalized_error
                                 pd_output = self.app.kp * normalized_error + self.app.kd * derivative
 
-                                print(f'Error: {raw_error}px, PD: {pd_output:.2f}')
+                                print(f'Error: {raw_error}px (norm={normalized_error:.3f}), h={real_height}, Kp={self.app.kp}, PD: {pd_output:.2f}')
 
                                 if pd_output > 0:
                                     if not self.app.is_clicking:
