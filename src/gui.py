@@ -140,8 +140,8 @@ class HotkeyGUI:
 
         self.real_area = None
         self.is_clicking = False
-        self.kp = 0.1
-        self.kd = 0.5
+        self.kp = 1.0
+        self.kd = 0.85
         self.previous_error = 0
         self.scan_timeout = 15.0
         self.wait_after_loss = 1.0

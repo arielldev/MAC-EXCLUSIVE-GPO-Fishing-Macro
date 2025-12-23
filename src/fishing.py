@@ -34,13 +34,9 @@ class FishingBot:
 
     def _is_dark_pixel(self, rgb_tuple):
         r, g, b = rgb_tuple
-        # Windows-aligned: treat as dark if near (25,25,25) or below a modest threshold
-        base = 25
-        tol = 25  # allow shader/AA variance around the canonical dark color
-        threshold = 80  # cap for generic darkness
-        near_dark = (abs(r - base) <= tol and abs(g - base) <= tol and abs(b - base) <= tol)
-        below_cap = (r < threshold and g < threshold and b < threshold)
-        return near_dark or below_cap
+        # Mac fish silhouette: more permissive than Windows exact match, but targeted
+        threshold = 110  # catches fish + shadows without grabbing bright blue background
+        return r < threshold and g < threshold and b < threshold
 
     def _is_white_pixel(self, rgb_tuple):
         r, g, b = rgb_tuple
