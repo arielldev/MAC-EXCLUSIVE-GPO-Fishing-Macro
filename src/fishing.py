@@ -919,61 +919,30 @@ class FishingBot:
                                 time.sleep(0.1)
                                 continue
                             
-                            # Look for blue bar (target color) using a noise-tolerant mask instead of single-pixel matches
+                            # Look for blue bar (target color) via per-pixel tolerance scanning (Windows-style)
                             try:
                                 found_first = False
                                 point1_x = None
                                 point1_y = None
                                 point2_x = None
-                                tolerance = 12  # Slightly wider to handle capture/color shifts
-                                bar_top_for_crop = y
-                                bar_height_for_crop = height
+                                tolerance = 12  # handle slight color shifts
 
-                                # Build a mask in BGR space (mss provides BGRA/BGR)
-                                target_bgr = (target_color[2], target_color[1], target_color[0])
-                                lower = np.array([max(0, target_bgr[0] - tolerance),
-                                                  max(0, target_bgr[1] - tolerance),
-                                                  max(0, target_bgr[2] - tolerance)], dtype=np.uint8)
-                                upper = np.array([min(255, target_bgr[0] + tolerance),
-                                                  min(255, target_bgr[1] + tolerance),
-                                                  min(255, target_bgr[2] + tolerance)], dtype=np.uint8)
+                                for row_idx in range(height):
+                                    for col_idx in range(width):
+                                        b, g, r = img[row_idx, col_idx, 0:3]
+                                        rb, gb, bb = int(r), int(g), int(b)
+                                        if (abs(rb - target_color[0]) <= tolerance and
+                                            abs(gb - target_color[1]) <= tolerance and
+                                            abs(bb - target_color[2]) <= tolerance):
+                                            point1_x = x + col_idx
+                                            point1_y = y + row_idx
+                                            found_first = True
+                                            break
+                                    if found_first:
+                                        break
 
-                                mask = cv2.inRange(img, lower, upper)
-                                # Close small gaps to avoid fragmented contours
-                                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
-
-                                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-                                if contours:
-                                    largest = max(contours, key=cv2.contourArea)
-                                    x0, y0, w0, h0 = cv2.boundingRect(largest)
-
-                                    MIN_BAR_WIDTH = 25
-                                    MIN_BAR_HEIGHT = 20
-
-                                    if w0 >= MIN_BAR_WIDTH and h0 >= MIN_BAR_HEIGHT:
-                                        point1_x = x + x0
-                                        point2_x = point1_x + w0 - 1
-                                        # Use the middle of the contour for the reference row
-                                        point1_y = y + y0 + (h0 // 2)
-                                        bar_top_for_crop = y + y0
-                                        bar_height_for_crop = h0
-                                        found_first = True
-                                        print(f"✅ Blue bar found area x={point1_x}, y={y + y0}, w={w0}, h={h0} (tol±{tolerance})")
-                                    else:
-                                        print(f"⚠️ Largest blue region too small (w={w0}, h={h0}); ignoring match")
-
-                                # DEBUG: If not found, sample dominant colors to help tune
                                 if not found_first and time.time() - cast_time < 2.0:
-                                    print(f'🔍 DEBUG: No match for target color {target_color} (tolerance±{tolerance}). Sampling pixels...')
-                                    sample_colors = {}
-                                    for row_idx in range(0, height, max(1, height // 5)):  # Sample 5 rows
-                                        for col_idx in range(0, width, max(1, width // 5)):  # Sample 5 cols
-                                            b, g, r = img[row_idx, col_idx, 0:3]
-                                            color_tuple = (r, g, b)
-                                            sample_colors[color_tuple] = sample_colors.get(color_tuple, 0) + 1
-                                    sorted_colors = sorted(sample_colors.items(), key=lambda x: x[1], reverse=True)[:5]
-                                    print(f'🔍 Top colors in bar area (RGB): {[f"({c[0][0]},{c[0][1]},{c[0][2]})" for c in sorted_colors]}')
+                                    print(f'🔍 DEBUG: No match for target color {target_color} (tolerance±{tolerance}). Consider widening.')
                             except Exception as detection_error:
                                 print(f'❌ Blue bar detection error: {detection_error}')
                                 time.sleep(0.1)
@@ -1065,9 +1034,8 @@ class FishingBot:
                             if point2_x is None:
                                 point2_x = min(x + width - 1, point1_x + 3)
                                 detected_bar_width = point2_x - point1_x + 1
-                                # Reject bars that are too narrow (likely false positives)
-                                if detected_bar_width < 25:
-                                    print(f"⚠️ Detected bar too narrow ({detected_bar_width}px); likely false positive at ({point1_x}, {point1_y}). Skipping.")
+                                if detected_bar_width < 40:
+                                    print(f"⚠️ Detected bar too narrow ({detected_bar_width}px); skipping.")
                                     time.sleep(0.1)
                                     continue
                                 print(f"⚠️ Right edge not found; using fallback width from {point1_x} to {point2_x}")
@@ -1075,14 +1043,15 @@ class FishingBot:
                             # Get the fishing bar area
                             temp_area_x = point1_x
                             temp_area_width = max(1, point2_x - point1_x + 1)
-                            temp_area_top = bar_top_for_crop
-                            temp_area_height = bar_height_for_crop
-                            
-                            # Final sanity check on bar width
-                            if temp_area_width < 25:
-                                print(f"⚠️ Final bar width too narrow ({temp_area_width}px); skipping detection.")
+                            temp_area_top = y  # match Windows logic
+                            temp_area_height = height
+
+                            if temp_area_width < 40 or temp_area_height < 40:
+                                print(f"⚠️ Final bar too small (w={temp_area_width}, h={temp_area_height}); skipping.")
                                 time.sleep(0.1)
                                 continue
+
+                            # Capture cropped bar image
                             temp_monitor_px = {
                                 'left': int(temp_area_x * self._retina_scale),
                                 'top': int(temp_area_top * self._retina_scale),
@@ -1091,51 +1060,55 @@ class FishingBot:
                             }
                             temp_screenshot = sct.grab(temp_monitor_px)
                             temp_img = np.array(temp_screenshot)
-                            # Convert BGRA to BGR (remove alpha channel if present)
                             if temp_img.shape[2] == 4:
                                 temp_img = temp_img[:, :, :3]
-                            # Normalize for Retina
                             t_h, t_w = temp_img.shape[0], temp_img.shape[1]
                             if t_w != temp_area_width or t_h != temp_area_height:
                                 temp_img = cv2.resize(temp_img, (temp_area_width, temp_area_height), interpolation=cv2.INTER_NEAREST)
-                            
-                            # Find top and bottom of dark area
+
+                            # Find top and bottom of dark area (per-pixel tolerance)
+                            dark_tol = 40
                             top_y = None
                             for row_idx in range(temp_area_height):
                                 found_dark = False
                                 for col_idx in range(temp_area_width):
                                     b, g, r = temp_img[row_idx, col_idx, 0:3]
                                     rb, gb, bb = int(r), int(g), int(b)
-                                    if (abs(rb - dark_color[0]) <= 20 and
-                                        abs(gb - dark_color[1]) <= 20 and
-                                        abs(bb - dark_color[2]) <= 20):
+                                    if (abs(rb - dark_color[0]) <= dark_tol and
+                                        abs(gb - dark_color[1]) <= dark_tol and
+                                        abs(bb - dark_color[2]) <= dark_tol):
                                         top_y = temp_area_top + row_idx
                                         found_dark = True
                                         break
                                 if found_dark:
                                     break
-                            
+
                             bottom_y = None
                             for row_idx in range(temp_area_height - 1, -1, -1):
                                 found_dark = False
                                 for col_idx in range(temp_area_width):
                                     b, g, r = temp_img[row_idx, col_idx, 0:3]
                                     rb, gb, bb = int(r), int(g), int(b)
-                                    if (abs(rb - dark_color[0]) <= 20 and
-                                        abs(gb - dark_color[1]) <= 20 and
-                                        abs(bb - dark_color[2]) <= 20):
+                                    if (abs(rb - dark_color[0]) <= dark_tol and
+                                        abs(gb - dark_color[1]) <= dark_tol and
+                                        abs(bb - dark_color[2]) <= dark_tol):
                                         bottom_y = temp_area_top + row_idx
                                         found_dark = True
                                         break
                                 if found_dark:
                                     break
-                            
+
                             if top_y is None or bottom_y is None:
                                 time.sleep(0.1)
                                 continue
-                            
-                            # Get the real fishing area
-                            self.app.real_area = {'x': temp_area_x, 'y': top_y, 'width': temp_area_width, 'height': bottom_y - top_y + 1}
+
+                            # Real fishing area crop
+                            self.app.real_area = {
+                                'x': temp_area_x,
+                                'y': top_y,
+                                'width': temp_area_width,
+                                'height': bottom_y - top_y + 1
+                            }
                             real_x = self.app.real_area['x']
                             real_y = self.app.real_area['y']
                             real_width = self.app.real_area['width']
@@ -1148,51 +1121,48 @@ class FishingBot:
                             }
                             real_screenshot = sct.grab(real_monitor_px)
                             real_img = np.array(real_screenshot)
-                            # Convert BGRA to BGR (remove alpha channel if present)
                             if real_img.shape[2] == 4:
                                 real_img = real_img[:, :, :3]
-                            # Normalize for Retina
                             r_h, r_w = real_img.shape[0], real_img.shape[1]
                             if r_w != real_width or r_h != real_height:
                                 real_img = cv2.resize(real_img, (real_width, real_height), interpolation=cv2.INTER_NEAREST)
-                            
-                            # Skip validation for now - keep it simple
-                            
-                            # Find white indicator
+
+                            # Find white indicator (per-pixel tolerance)
+                            white_tol = 60
                             white_top_y = None
                             white_bottom_y = None
                             for row_idx in range(real_height):
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
                                     rb, gb, bb = int(r), int(g), int(b)
-                                    if (abs(rb - white_color[0]) <= 30 and
-                                        abs(gb - white_color[1]) <= 30 and
-                                        abs(bb - white_color[2]) <= 30):
+                                    if (abs(rb - white_color[0]) <= white_tol and
+                                        abs(gb - white_color[1]) <= white_tol and
+                                        abs(bb - white_color[2]) <= white_tol):
                                         white_top_y = real_y + row_idx
                                         break
                                 if white_top_y is not None:
                                     break
-                            
+
                             for row_idx in range(real_height - 1, -1, -1):
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
                                     rb, gb, bb = int(r), int(g), int(b)
-                                    if (abs(rb - white_color[0]) <= 30 and
-                                        abs(gb - white_color[1]) <= 30 and
-                                        abs(bb - white_color[2]) <= 30):
+                                    if (abs(rb - white_color[0]) <= white_tol and
+                                        abs(gb - white_color[1]) <= white_tol and
+                                        abs(bb - white_color[2]) <= white_tol):
                                         white_bottom_y = real_y + row_idx
                                         break
                                 if white_bottom_y is not None:
                                     break
-                            
+
                             if white_top_y is not None and white_bottom_y is not None:
-                                white_height = white_bottom_y - white_top_y + 1
-                                max_gap = white_height * 2
+                                white_height = max(1, white_bottom_y - white_top_y + 1)
+                                max_gap = max(3, int(white_height * 2))
                             else:
-                                # Debug why control didn't start
                                 print(f"⚠️ White indicator not found (top={white_top_y}, bottom={white_bottom_y}) in real area w={real_width}, h={real_height}")
-                            
-                            # Find dark sections (fish position)
+                                max_gap = max(3, int(real_height * 0.2))
+
+                            # Find dark sections (fish position) in real_img
                             dark_sections = []
                             current_section_start = None
                             gap_counter = 0
@@ -1201,9 +1171,9 @@ class FishingBot:
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
                                     rb, gb, bb = int(r), int(g), int(b)
-                                    if (abs(rb - dark_color[0]) <= 20 and
-                                        abs(gb - dark_color[1]) <= 20 and
-                                        abs(bb - dark_color[2]) <= 20):
+                                    if (abs(rb - dark_color[0]) <= dark_tol and
+                                        abs(gb - dark_color[1]) <= dark_tol and
+                                        abs(bb - dark_color[2]) <= dark_tol):
                                         has_dark = True
                                         break
                                 if has_dark:
@@ -1218,20 +1188,18 @@ class FishingBot:
                                             dark_sections.append({'start': current_section_start, 'end': section_end, 'middle': (current_section_start + section_end) // 2})
                                             current_section_start = None
                                             gap_counter = 0
-                            
                             if current_section_start is not None:
                                 section_end = real_y + real_height - 1 - gap_counter
                                 dark_sections.append({'start': current_section_start, 'end': section_end, 'middle': (current_section_start + section_end) // 2})
-                            
-                            # Enhanced smart fishing control with arming to avoid instant reel-in
+
+                            # PD control once signals present
                             if dark_sections and white_top_y is not None:
-                                # Build stability before arming control
                                 if first_detection_time is None:
                                     first_detection_time = time.time()
                                 stable_frames += 1
 
                                 if (not control_armed and
-                                    stable_frames >= 3 and
+                                    stable_frames >= 2 and
                                     time.time() - cast_time >= MIN_CONTROL_DELAY):
                                     control_armed = True
                                     was_detecting = True
@@ -1239,7 +1207,6 @@ class FishingBot:
                                     self.app.set_recovery_state("fishing", {"action": "fish_control_active"})
 
                                 if not control_armed:
-                                    # Ensure we are not holding mouse before arming
                                     if self.app.is_clicking:
                                         try:
                                             self.mouse.release(pynput_mouse.Button.left)
@@ -1249,7 +1216,6 @@ class FishingBot:
                                     time.sleep(0.05)
                                     continue
 
-                                # PD control once armed
                                 for section in dark_sections:
                                     section['size'] = section['end'] - section['start'] + 1
                                 largest_section = max(dark_sections, key=lambda s: s['size'])
@@ -1277,11 +1243,33 @@ class FishingBot:
                                             pass
                                         self.app.is_clicking = False
                             else:
-                                # More debug to surface why control didn't run
                                 if not dark_sections:
                                     print(f"⚠️ No dark sections detected in real area; bar width={real_width}, height={real_height}")
                                 if white_top_y is None:
-                                    print("⚠️ Missing white indicator; cannot compute error")
+                                    print("⚠️ Missing white indicator; cannot compute control")
+                                if first_detection_time is None:
+                                    first_detection_time = time.time()
+                                stable_frames += 1
+
+                                if (not control_armed and
+                                    stable_frames >= 2 and
+                                    time.time() - cast_time >= MIN_CONTROL_DELAY):
+                                    control_armed = True
+                                    was_detecting = True
+                                    print('Fish detected! Starting control...')
+                                    self.app.set_recovery_state("fishing", {"action": "fish_control_active"})
+
+                                if not control_armed:
+                                    if self.app.is_clicking:
+                                        try:
+                                            self.mouse.release(pynput_mouse.Button.left)
+                                        except Exception:
+                                            pass
+                                        self.app.is_clicking = False
+                                    time.sleep(0.05)
+                                    continue
+
+                                # No secondary control path here; fall back to next iteration
                             
                             time.sleep(0.1)
                         
