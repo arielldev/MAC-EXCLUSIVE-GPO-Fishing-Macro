@@ -41,6 +41,21 @@ class FishingBot:
         r, g, b = rgb_tuple
         threshold = 230  # near-white tolerance
         return r >= threshold and g >= threshold and b >= threshold
+
+    def _is_indicator_pixel(self, rgb_tuple):
+        """Detects the horizontal indicator line: bright white or bright lime-green.
+        Works across shader/AA variations by focusing on luminance and high green.
+        """
+        r, g, b = rgb_tuple
+        # Bright white
+        if r >= 230 and g >= 230 and b >= 230:
+            return True
+        # Bright lime/green (common when hooked): high G dominates
+        if g >= 200 and r >= 140:
+            return True
+        # Luminance fallback (Y ~ 200+)
+        y = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        return y >= 200
     
     def check_recovery_needed(self):
         """Smart recovery check - detects genuinely stuck states"""
@@ -962,31 +977,11 @@ class FishingBot:
                                 time.sleep(0.1)
                                 continue
                             
-                            # Look for blue bar (target color) using tolerant matching
-                            try:
-                                found_first = False
-                                point1_x = None
-                                point1_y = None
-                                point2_x = None
-
-                                for row_idx in range(height):
-                                    for col_idx in range(width):
-                                        b, g, r = img[row_idx, col_idx, 0:3]
-                                        rb, gb, bb = int(r), int(g), int(b)
-                                        if self._matches_color((rb, gb, bb), target_color, tol=getattr(self.app, 'color_tolerance', 28)):
-                                            point1_x = x + col_idx
-                                            point1_y = y + row_idx
-                                            found_first = True
-                                            break
-                                    if found_first:
-                                        break
-
-                                if not found_first and time.time() - cast_time < 2.0:
-                                    print(f'🔍 DEBUG: No match for target color {target_color}. Trying auto-locate...')
-                            except Exception as detection_error:
-                                print(f'❌ Blue bar detection error: {detection_error}')
-                                time.sleep(0.1)
-                                continue
+                            # Use the full user-defined bar layout as the bar region (simpler, robust)
+                            found_first = True
+                            point1_x = x
+                            point1_y = y
+                            point2_x = x + width - 1
                             
                             if found_first:
                                 detected = True
@@ -1058,40 +1053,15 @@ class FishingBot:
                                 time.sleep(0.1)
                                 continue
                             
-                            # Find right edge of blue bar (tolerant matching)
-                            if point2_x is None:
-                                row_idx = point1_y - y
-                                for col_idx in range(width - 1, -1, -1):
-                                    b, g, r = img[row_idx, col_idx, 0:3]
-                                    rb, gb, bb = int(r), int(g), int(b)
-                                    if self._matches_color((rb, gb, bb), target_color, tol=getattr(self.app, 'color_tolerance', 28)):
-                                        point2_x = x + col_idx
-                                        break
+                            # Right edge is the bar layout's right boundary
+                            # (We rely on white/dark detection inside this window.)
 
-                            # As a fallback, assume a thin bar if we couldn't find the right edge
-                            if point2_x is None:
-                                point2_x = min(x + width - 1, point1_x + 3)
-                                detected_bar_width = point2_x - point1_x + 1
-                                if detected_bar_width < 40:
-                                    print(f"⚠️ Detected bar too narrow ({detected_bar_width}px); using full bar layout area as fallback.")
-                                    # Use the full bar layout area for minigame control instead of skipping
-                                    temp_area_x = x
-                                    temp_area_width = width
-                                    temp_area_top = y
-                                    temp_area_height = height
-                                    # Continue with the full bar layout area
-                                else:
-                                    print(f"⚠️ Right edge not found; using fallback width from {point1_x} to {point2_x}")
-                                    temp_area_x = point1_x
-                                    temp_area_width = detected_bar_width
-                                    temp_area_top = y
-                                    temp_area_height = height
-                            else:
-                                detected_bar_width = point2_x - point1_x + 1
-                                temp_area_x = point1_x
-                                temp_area_width = detected_bar_width
-                                temp_area_top = y
-                                temp_area_height = height
+                            # Always use the full bar layout window as the real detection area
+                            detected_bar_width = width
+                            temp_area_x = x
+                            temp_area_width = width
+                            temp_area_top = y
+                            temp_area_height = height
                             
                             # Print debug info for bar detection
                             print(f"[DEBUG] Bar layout area: x={x}, y={y}, w={width}, h={height} | Detected bar: x={temp_area_x}, w={temp_area_width}")
@@ -1172,28 +1142,24 @@ class FishingBot:
                             if r_w != real_width or r_h != real_height:
                                 real_img = cv2.resize(real_img, (real_width, real_height), interpolation=cv2.INTER_NEAREST)
 
-                            # Find white indicator (tolerant white detection)
+                            # Find white/green indicator (row-wise tolerant detection)
                             white_top_y = None
                             white_bottom_y = None
+                            indicator_rows = []
+                            min_row_hits = max(3, int(real_width * 0.02))  # require at least 2% of row pixels
                             for row_idx in range(real_height):
+                                hits = 0
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
                                     rb, gb, bb = int(r), int(g), int(b)
-                                    if self._is_white_pixel((rb, gb, bb)):
-                                        white_top_y = real_y + row_idx
-                                        break
-                                if white_top_y is not None:
-                                    break
+                                    if self._is_indicator_pixel((rb, gb, bb)):
+                                        hits += 1
+                                if hits >= min_row_hits:
+                                    indicator_rows.append(real_y + row_idx)
 
-                            for row_idx in range(real_height - 1, -1, -1):
-                                for col_idx in range(real_width):
-                                    b, g, r = real_img[row_idx, col_idx, 0:3]
-                                    rb, gb, bb = int(r), int(g), int(b)
-                                    if self._is_white_pixel((rb, gb, bb)):
-                                        white_bottom_y = real_y + row_idx
-                                        break
-                                if white_bottom_y is not None:
-                                    break
+                            if indicator_rows:
+                                white_top_y = indicator_rows[0]
+                                white_bottom_y = indicator_rows[-1]
 
                             if white_top_y is not None and white_bottom_y is not None:
                                 white_height = max(1, white_bottom_y - white_top_y + 1)
