@@ -34,8 +34,13 @@ class FishingBot:
 
     def _is_dark_pixel(self, rgb_tuple):
         r, g, b = rgb_tuple
-        threshold = 75 
-        return r < threshold and g < threshold and b < threshold
+        # Windows-aligned: treat as dark if near (25,25,25) or below a modest threshold
+        base = 25
+        tol = 25  # allow shader/AA variance around the canonical dark color
+        threshold = 80  # cap for generic darkness
+        near_dark = (abs(r - base) <= tol and abs(g - base) <= tol and abs(b - base) <= tol)
+        below_cap = (r < threshold and g < threshold and b < threshold)
+        return near_dark or below_cap
 
     def _is_white_pixel(self, rgb_tuple):
         r, g, b = rgb_tuple
@@ -785,6 +790,7 @@ class FishingBot:
                 
                 # Main fishing loop
                 while self.app.main_loop_active and not self.force_stop_flag:
+                    consecutive_recasts = 0
                     # Update heartbeat for watchdog
                     self.update_heartbeat()
                     
@@ -892,6 +898,13 @@ class FishingBot:
                             if current_time - detection_start_time > adaptive_timeout:
                                 if not detected:
                                     print(f'⏰ No fish detected after {adaptive_timeout:.1f}s (adaptive), recasting...')
+                                    consecutive_recasts += 1
+                                    # Throttle recasts to avoid rapid spam
+                                    time.sleep(0.8)
+                                    if consecutive_recasts >= 3:
+                                        print('⏸️ Too many recasts without detection; pausing loop. Toggle start to retry.')
+                                        self.app.main_loop_active = False
+                                        break
                                     # Track failed attempt
                                     self.recent_catches.append(False)
                                     if len(self.recent_catches) > 10:
@@ -907,6 +920,13 @@ class FishingBot:
                                         except Exception:
                                             pass
                                         self.app.is_clicking = False
+                                    consecutive_recasts += 1
+                                    # Throttle recasts to avoid rapid spam
+                                    time.sleep(0.8)
+                                    if consecutive_recasts >= 3:
+                                        print('⏸️ Too many recasts without control; pausing loop. Toggle start to retry.')
+                                        self.app.main_loop_active = False
+                                        break
                                     # Track failed attempt
                                     self.recent_catches.append(False)
                                     if len(self.recent_catches) > 10:
@@ -1038,6 +1058,7 @@ class FishingBot:
                                     
                                     # Increment fish counter when fish is actually caught
                                     self.app.increment_fish_counter()
+                                    consecutive_recasts = 0
                                     
                                     # Complete post-catch workflow
                                     self.process_post_catch_workflow()
