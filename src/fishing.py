@@ -919,42 +919,59 @@ class FishingBot:
                                 time.sleep(0.1)
                                 continue
                             
-                            # Look for blue bar (target color) - with small tolerance for Retina color profile shifts
+                            # Look for blue bar (target color) using a noise-tolerant mask instead of single-pixel matches
                             try:
+                                found_first = False
                                 point1_x = None
                                 point1_y = None
-                                found_first = False
-                                tolerance = 7  # Allow ±7 variance per channel for Retina display color shifts
-                                
-                                # Scan for color match with tolerance
-                                for row_idx in range(height):
-                                    for col_idx in range(width):
-                                        b, g, r = img[row_idx, col_idx, 0:3]
-                                        rb, gb, bb = int(r), int(g), int(b)
-                                        # Match with tolerance to handle Retina color profile shifts
-                                        if (abs(rb - target_color[0]) <= tolerance and 
-                                            abs(gb - target_color[1]) <= tolerance and 
-                                            abs(bb - target_color[2]) <= tolerance):
-                                            point1_x = x + col_idx
-                                            point1_y = y + row_idx
-                                            found_first = True
-                                            print(f'✅ Blue bar found at pixel ({col_idx}, {row_idx}) with color (R={r},G={g},B={b})')
-                                            break
-                                    if found_first:
-                                        break
-                                
-                                # DEBUG: If not found, sample pixels to identify actual colors
-                                if not found_first and time.time() - cast_time < 2.0:  # Only log first few attempts
+                                point2_x = None
+                                tolerance = 12  # Slightly wider to handle capture/color shifts
+                                bar_top_for_crop = y
+                                bar_height_for_crop = height
+
+                                # Build a mask in BGR space (mss provides BGRA/BGR)
+                                target_bgr = (target_color[2], target_color[1], target_color[0])
+                                lower = np.array([max(0, target_bgr[0] - tolerance),
+                                                  max(0, target_bgr[1] - tolerance),
+                                                  max(0, target_bgr[2] - tolerance)], dtype=np.uint8)
+                                upper = np.array([min(255, target_bgr[0] + tolerance),
+                                                  min(255, target_bgr[1] + tolerance),
+                                                  min(255, target_bgr[2] + tolerance)], dtype=np.uint8)
+
+                                mask = cv2.inRange(img, lower, upper)
+                                # Close small gaps to avoid fragmented contours
+                                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+
+                                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+                                if contours:
+                                    largest = max(contours, key=cv2.contourArea)
+                                    x0, y0, w0, h0 = cv2.boundingRect(largest)
+
+                                    MIN_BAR_WIDTH = 25
+                                    MIN_BAR_HEIGHT = 20
+
+                                    if w0 >= MIN_BAR_WIDTH and h0 >= MIN_BAR_HEIGHT:
+                                        point1_x = x + x0
+                                        point2_x = point1_x + w0 - 1
+                                        # Use the middle of the contour for the reference row
+                                        point1_y = y + y0 + (h0 // 2)
+                                        bar_top_for_crop = y + y0
+                                        bar_height_for_crop = h0
+                                        found_first = True
+                                        print(f"✅ Blue bar found area x={point1_x}, y={y + y0}, w={w0}, h={h0} (tol±{tolerance})")
+                                    else:
+                                        print(f"⚠️ Largest blue region too small (w={w0}, h={h0}); ignoring match")
+
+                                # DEBUG: If not found, sample dominant colors to help tune
+                                if not found_first and time.time() - cast_time < 2.0:
                                     print(f'🔍 DEBUG: No match for target color {target_color} (tolerance±{tolerance}). Sampling pixels...')
                                     sample_colors = {}
                                     for row_idx in range(0, height, max(1, height // 5)):  # Sample 5 rows
                                         for col_idx in range(0, width, max(1, width // 5)):  # Sample 5 cols
                                             b, g, r = img[row_idx, col_idx, 0:3]
                                             color_tuple = (r, g, b)
-                                            if color_tuple not in sample_colors:
-                                                sample_colors[color_tuple] = 0
-                                            sample_colors[color_tuple] += 1
-                                    # Print top 5 colors found
+                                            sample_colors[color_tuple] = sample_colors.get(color_tuple, 0) + 1
                                     sorted_colors = sorted(sample_colors.items(), key=lambda x: x[1], reverse=True)[:5]
                                     print(f'🔍 Top colors in bar area (RGB): {[f"({c[0][0]},{c[0][1]},{c[0][2]})" for c in sorted_colors]}')
                             except Exception as detection_error:
@@ -1033,23 +1050,23 @@ class FishingBot:
                                 continue
                             
                             # Find right edge of blue bar (with tolerance for Retina)
-                            point2_x = None
-                            row_idx = point1_y - y
-                            for col_idx in range(width - 1, -1, -1):
-                                b, g, r = img[row_idx, col_idx, 0:3]
-                                rb, gb, bb = int(r), int(g), int(b)
-                                if (abs(rb - target_color[0]) <= tolerance and 
-                                    abs(gb - target_color[1]) <= tolerance and 
-                                    abs(bb - target_color[2]) <= tolerance):
-                                    point2_x = x + col_idx
-                                    break
+                            if point2_x is None:
+                                row_idx = point1_y - y
+                                for col_idx in range(width - 1, -1, -1):
+                                    b, g, r = img[row_idx, col_idx, 0:3]
+                                    rb, gb, bb = int(r), int(g), int(b)
+                                    if (abs(rb - target_color[0]) <= tolerance and 
+                                        abs(gb - target_color[1]) <= tolerance and 
+                                        abs(bb - target_color[2]) <= tolerance):
+                                        point2_x = x + col_idx
+                                        break
 
                             # As a fallback, assume a thin bar if we couldn't find the right edge
                             if point2_x is None:
                                 point2_x = min(x + width - 1, point1_x + 3)
                                 detected_bar_width = point2_x - point1_x + 1
                                 # Reject bars that are too narrow (likely false positives)
-                                if detected_bar_width < 10:
+                                if detected_bar_width < 25:
                                     print(f"⚠️ Detected bar too narrow ({detected_bar_width}px); likely false positive at ({point1_x}, {point1_y}). Skipping.")
                                     time.sleep(0.1)
                                     continue
@@ -1058,17 +1075,19 @@ class FishingBot:
                             # Get the fishing bar area
                             temp_area_x = point1_x
                             temp_area_width = max(1, point2_x - point1_x + 1)
+                            temp_area_top = bar_top_for_crop
+                            temp_area_height = bar_height_for_crop
                             
                             # Final sanity check on bar width
-                            if temp_area_width < 10:
+                            if temp_area_width < 25:
                                 print(f"⚠️ Final bar width too narrow ({temp_area_width}px); skipping detection.")
                                 time.sleep(0.1)
                                 continue
                             temp_monitor_px = {
                                 'left': int(temp_area_x * self._retina_scale),
-                                'top': int(y * self._retina_scale),
+                                'top': int(temp_area_top * self._retina_scale),
                                 'width': int(temp_area_width * self._retina_scale),
-                                'height': int(height * self._retina_scale)
+                                'height': int(temp_area_height * self._retina_scale)
                             }
                             temp_screenshot = sct.grab(temp_monitor_px)
                             temp_img = np.array(temp_screenshot)
@@ -1077,12 +1096,12 @@ class FishingBot:
                                 temp_img = temp_img[:, :, :3]
                             # Normalize for Retina
                             t_h, t_w = temp_img.shape[0], temp_img.shape[1]
-                            if t_w != temp_area_width or t_h != height:
-                                temp_img = cv2.resize(temp_img, (temp_area_width, height), interpolation=cv2.INTER_NEAREST)
+                            if t_w != temp_area_width or t_h != temp_area_height:
+                                temp_img = cv2.resize(temp_img, (temp_area_width, temp_area_height), interpolation=cv2.INTER_NEAREST)
                             
                             # Find top and bottom of dark area
                             top_y = None
-                            for row_idx in range(height):
+                            for row_idx in range(temp_area_height):
                                 found_dark = False
                                 for col_idx in range(temp_area_width):
                                     b, g, r = temp_img[row_idx, col_idx, 0:3]
@@ -1090,14 +1109,14 @@ class FishingBot:
                                     if (abs(rb - dark_color[0]) <= 20 and
                                         abs(gb - dark_color[1]) <= 20 and
                                         abs(bb - dark_color[2]) <= 20):
-                                        top_y = y + row_idx
+                                        top_y = temp_area_top + row_idx
                                         found_dark = True
                                         break
                                 if found_dark:
                                     break
                             
                             bottom_y = None
-                            for row_idx in range(height - 1, -1, -1):
+                            for row_idx in range(temp_area_height - 1, -1, -1):
                                 found_dark = False
                                 for col_idx in range(temp_area_width):
                                     b, g, r = temp_img[row_idx, col_idx, 0:3]
@@ -1105,7 +1124,7 @@ class FishingBot:
                                     if (abs(rb - dark_color[0]) <= 20 and
                                         abs(gb - dark_color[1]) <= 20 and
                                         abs(bb - dark_color[2]) <= 20):
-                                        bottom_y = y + row_idx
+                                        bottom_y = temp_area_top + row_idx
                                         found_dark = True
                                         break
                                 if found_dark:
