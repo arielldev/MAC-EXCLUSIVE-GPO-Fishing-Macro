@@ -26,6 +26,7 @@ try:
     from src.layout_manager import LayoutManager
 except ImportError:
     from themes import ThemeManager
+    from fishing import FishingBot
     from layout_manager import LayoutManager
 
 class ToolTip:
@@ -129,7 +130,7 @@ class HotkeyGUI:
         except Exception as e:
             print(f"Could not set window icon: {e}")
         
-        # macOS: no Windows DPI call; use default HiDPI behavior
+        # macOS: use default HiDPI behavior
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         self.main_loop_active = False
@@ -1133,29 +1134,59 @@ Sequence (per user spec):
         """Resume loop with smart detection of current state"""
         import mss
         import numpy as np
-        
-        # Check if there's already a blue fishing bar visible
+        # Optional resize to logical coordinates if HiDPI
+        try:
+            import cv2
+        except Exception:
+            cv2 = None
+
+        # Target blue color (RGB) with tolerance, Mac-only
         target_color = (85, 170, 255)
-        
+        tol = 7
+        scale = getattr(self, 'dpi_scale', 1.0) or 1.0
+
+        blue_found = False
+
         with mss.mss() as sct:
             # Use current layout area for screenshot
             current_area = self.layout_manager.get_layout_area(self.layout_manager.current_layout)
             if not current_area:
                 current_area = {'x': 700, 'y': 400, 'width': 200, 'height': 100}  # Default bar area
-            x = current_area['x']
-            y = current_area['y']
-            width = current_area['width']
-            height = current_area['height']
-            monitor = {'left': x, 'top': y, 'width': width, 'height': height}
+
+            # Convert logical coords to device pixels for HiDPI/Retina
+            px_left = int(round(current_area['x'] * scale))
+            px_top = int(round(current_area['y'] * scale))
+            px_w = int(round(current_area['width'] * scale))
+            px_h = int(round(current_area['height'] * scale))
+
+            monitor = {'left': px_left, 'top': px_top, 'width': px_w, 'height': px_h}
             screenshot = sct.grab(monitor)
-            img = np.array(screenshot)
-            
-            # Look for blue fishing bar
-            blue_found = False
-            for row_idx in range(height):
-                for col_idx in range(width):
-                    b, g, r = img[row_idx, col_idx, 0:3]
-                    if r == target_color[0] and g == target_color[1] and b == target_color[2]:
+
+            # BGRA to BGR; will resize back to logical dims if needed
+            img_px = np.array(screenshot)[:, :, :3]
+
+            # Normalize to logical size for consistent scanning
+            logical_w = int(round(current_area['width']))
+            logical_h = int(round(current_area['height']))
+            if scale != 1.0:
+                if cv2 is not None:
+                    img = cv2.resize(img_px, (logical_w, logical_h), interpolation=cv2.INTER_NEAREST)
+                else:
+                    ys = np.linspace(0, img_px.shape[0] - 1, logical_h).astype(int)
+                    xs = np.linspace(0, img_px.shape[1] - 1, logical_w).astype(int)
+                    img = img_px[ys][:, xs]
+            else:
+                img = img_px
+
+            h, w = img.shape[0], img.shape[1]
+            for row_idx in range(h):
+                row = img[row_idx]
+                for col_idx in range(w):
+                    b, g, r = row[col_idx]
+                    rr, gg, bb = int(r), int(g), int(b)
+                    if (abs(rr - target_color[0]) <= tol and
+                        abs(gg - target_color[1]) <= tol and
+                        abs(bb - target_color[2]) <= tol):
                         blue_found = True
                         break
                 if blue_found:
