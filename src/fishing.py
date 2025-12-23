@@ -34,7 +34,7 @@ class FishingBot:
 
     def _is_dark_pixel(self, rgb_tuple):
         r, g, b = rgb_tuple
-        threshold = 45  # allow slight variations
+        threshold = 100  
         return r < threshold and g < threshold and b < threshold
 
     def _is_white_pixel(self, rgb_tuple):
