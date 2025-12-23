@@ -896,8 +896,8 @@ class FishingBot:
                                     print(f'⏰ No fish detected after {adaptive_timeout:.1f}s (adaptive), recasting...')
                                     consecutive_recasts += 1
                                     # Throttle recasts to avoid rapid spam
-                                    time.sleep(0.8)
-                                    if consecutive_recasts >= 3:
+                                    time.sleep(1.5)
+                                    if consecutive_recasts >= 2:
                                         print('⏸️ Too many recasts without detection; pausing loop. Toggle start to retry.')
                                         self.app.main_loop_active = False
                                         break
@@ -918,8 +918,8 @@ class FishingBot:
                                         self.app.is_clicking = False
                                     consecutive_recasts += 1
                                     # Throttle recasts to avoid rapid spam
-                                    time.sleep(0.8)
-                                    if consecutive_recasts >= 3:
+                                    time.sleep(1.5)
+                                    if consecutive_recasts >= 2:
                                         print('⏸️ Too many recasts without control; pausing loop. Toggle start to retry.')
                                         self.app.main_loop_active = False
                                         break
