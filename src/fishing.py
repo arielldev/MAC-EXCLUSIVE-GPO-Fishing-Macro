@@ -604,7 +604,7 @@ class FishingBot:
             print(f"❌ Detection validation error: {e}")
             return {'is_valid': False, 'confidence': 0.0}
 
-    def auto_locate_bar_area(self, sct, target_color, tolerance):
+    def auto_locate_bar_area(self, sct, target_color):
         """Fallback: scan a larger region to auto-locate the fishing bar when overlay is misaligned.
         Returns an area dict {x,y,width,height} or None.
         """
@@ -642,9 +642,9 @@ class FishingBot:
                 row = img[row_idx]
                 for col_idx in range(0, search_width, stride_x):
                     b, g, r = row[col_idx, 0:3]
-                    if (abs(r - target_color[0]) <= tolerance and
-                        abs(g - target_color[1]) <= tolerance and
-                        abs(b - target_color[2]) <= tolerance):
+                    if (r == target_color[0] and
+                        g == target_color[1] and
+                        b == target_color[2]):
                         found_x = search_left + col_idx
                         found_y = search_top + row_idx
                         break
@@ -707,10 +707,12 @@ class FishingBot:
     def run_main_loop(self, skip_initial_setup=False):
         """Main fishing loop with enhanced smart detection and control"""
         print('🎣 Main loop started with enhanced smart detection')
-        # Align target color with working Windows version (RGB)
-        target_color = (85, 170, 255)
+        # For macOS: will auto-sample bar color on first detection
+        # Windows fallback: (85, 170, 255)
+        target_color = None  # Will be set after first screenshot
         dark_color = (25, 25, 25)
         white_color = (255, 255, 255)
+        first_bar_area_screenshot = True
         
         # Simplified control parameters
         self.error_smoothing = []  # Smooth error values for stability
@@ -914,26 +916,45 @@ class FishingBot:
                                     scale_h = img_h / float(height)
                                     self._retina_scale = (scale_w + scale_h) / 2.0
                                     img = cv2.resize(img, (width, height), interpolation=cv2.INTER_NEAREST)
+                                
+                                # Auto-sample bar color on first screenshot if target_color not set
+                                if first_bar_area_screenshot and target_color is None:
+                                    first_bar_area_screenshot = False
+                                    # Sample dominant light-blue-ish color in the bar area
+                                    color_counts = {}
+                                    for row_idx in range(height):
+                                        for col_idx in range(width):
+                                            b, g, r = img[row_idx, col_idx, 0:3]
+                                            # Only count bright cyan/blue pixels (R or G high, B very high)
+                                            if (int(b) > 150 and (int(r) > 100 or int(g) > 100)):
+                                                color_tuple = (int(r), int(g), int(b))
+                                                color_counts[color_tuple] = color_counts.get(color_tuple, 0) + 1
+                                    if color_counts:
+                                        target_color = max(color_counts.items(), key=lambda x: x[1])[0]
+                                        print(f'✅ Auto-detected bar color (RGB): {target_color}')
+                                    else:
+                                        # Fallback to Windows color
+                                        target_color = (85, 170, 255)
+                                        print(f'⚠️ No bright blue detected; using fallback color {target_color}')
                             except Exception as screenshot_error:
                                 print(f'❌ Screenshot error: {screenshot_error}')
                                 time.sleep(0.1)
                                 continue
                             
-                            # Look for blue bar (target color) via per-pixel tolerance scanning (Windows-style)
+                            # Look for blue bar (target color) via exact pixel matching (Windows-style)
                             try:
                                 found_first = False
                                 point1_x = None
                                 point1_y = None
                                 point2_x = None
-                                tolerance = 12  # handle slight color shifts
 
                                 for row_idx in range(height):
                                     for col_idx in range(width):
                                         b, g, r = img[row_idx, col_idx, 0:3]
                                         rb, gb, bb = int(r), int(g), int(b)
-                                        if (abs(rb - target_color[0]) <= tolerance and
-                                            abs(gb - target_color[1]) <= tolerance and
-                                            abs(bb - target_color[2]) <= tolerance):
+                                        if (rb == target_color[0] and
+                                            gb == target_color[1] and
+                                            bb == target_color[2]):
                                             point1_x = x + col_idx
                                             point1_y = y + row_idx
                                             found_first = True
@@ -942,7 +963,7 @@ class FishingBot:
                                         break
 
                                 if not found_first and time.time() - cast_time < 2.0:
-                                    print(f'🔍 DEBUG: No match for target color {target_color} (tolerance±{tolerance}). Consider widening.')
+                                    print(f'🔍 DEBUG: No match for target color {target_color}. Trying auto-locate...')
                             except Exception as detection_error:
                                 print(f'❌ Blue bar detection error: {detection_error}')
                                 time.sleep(0.1)
@@ -956,7 +977,7 @@ class FishingBot:
                                 if (not detected and not global_bar_search_attempted and
                                     time.time() - cast_time > 0.7):
                                     try:
-                                        auto_area = self.auto_locate_bar_area(sct, target_color, tolerance)
+                                        auto_area = self.auto_locate_bar_area(sct, target_color)
                                         global_bar_search_attempted = True
                                         if auto_area:
                                             override_bar_area = auto_area
@@ -1018,15 +1039,15 @@ class FishingBot:
                                 time.sleep(0.1)
                                 continue
                             
-                            # Find right edge of blue bar (with tolerance for Retina)
+                            # Find right edge of blue bar (exact pixel matching)
                             if point2_x is None:
                                 row_idx = point1_y - y
                                 for col_idx in range(width - 1, -1, -1):
                                     b, g, r = img[row_idx, col_idx, 0:3]
                                     rb, gb, bb = int(r), int(g), int(b)
-                                    if (abs(rb - target_color[0]) <= tolerance and 
-                                        abs(gb - target_color[1]) <= tolerance and 
-                                        abs(bb - target_color[2]) <= tolerance):
+                                    if (rb == target_color[0] and 
+                                        gb == target_color[1] and 
+                                        bb == target_color[2]):
                                         point2_x = x + col_idx
                                         break
 
@@ -1066,17 +1087,16 @@ class FishingBot:
                             if t_w != temp_area_width or t_h != temp_area_height:
                                 temp_img = cv2.resize(temp_img, (temp_area_width, temp_area_height), interpolation=cv2.INTER_NEAREST)
 
-                            # Find top and bottom of dark area (per-pixel tolerance)
-                            dark_tol = 40
+                            # Find top and bottom of dark area (exact pixel matching)
                             top_y = None
                             for row_idx in range(temp_area_height):
                                 found_dark = False
                                 for col_idx in range(temp_area_width):
                                     b, g, r = temp_img[row_idx, col_idx, 0:3]
                                     rb, gb, bb = int(r), int(g), int(b)
-                                    if (abs(rb - dark_color[0]) <= dark_tol and
-                                        abs(gb - dark_color[1]) <= dark_tol and
-                                        abs(bb - dark_color[2]) <= dark_tol):
+                                    if (rb == dark_color[0] and
+                                        gb == dark_color[1] and
+                                        bb == dark_color[2]):
                                         top_y = temp_area_top + row_idx
                                         found_dark = True
                                         break
@@ -1089,9 +1109,9 @@ class FishingBot:
                                 for col_idx in range(temp_area_width):
                                     b, g, r = temp_img[row_idx, col_idx, 0:3]
                                     rb, gb, bb = int(r), int(g), int(b)
-                                    if (abs(rb - dark_color[0]) <= dark_tol and
-                                        abs(gb - dark_color[1]) <= dark_tol and
-                                        abs(bb - dark_color[2]) <= dark_tol):
+                                    if (rb == dark_color[0] and
+                                        gb == dark_color[1] and
+                                        bb == dark_color[2]):
                                         bottom_y = temp_area_top + row_idx
                                         found_dark = True
                                         break
@@ -1127,17 +1147,16 @@ class FishingBot:
                             if r_w != real_width or r_h != real_height:
                                 real_img = cv2.resize(real_img, (real_width, real_height), interpolation=cv2.INTER_NEAREST)
 
-                            # Find white indicator (per-pixel tolerance)
-                            white_tol = 60
+                            # Find white indicator (exact pixel matching)
                             white_top_y = None
                             white_bottom_y = None
                             for row_idx in range(real_height):
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
                                     rb, gb, bb = int(r), int(g), int(b)
-                                    if (abs(rb - white_color[0]) <= white_tol and
-                                        abs(gb - white_color[1]) <= white_tol and
-                                        abs(bb - white_color[2]) <= white_tol):
+                                    if (rb == white_color[0] and
+                                        gb == white_color[1] and
+                                        bb == white_color[2]):
                                         white_top_y = real_y + row_idx
                                         break
                                 if white_top_y is not None:
@@ -1147,9 +1166,9 @@ class FishingBot:
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
                                     rb, gb, bb = int(r), int(g), int(b)
-                                    if (abs(rb - white_color[0]) <= white_tol and
-                                        abs(gb - white_color[1]) <= white_tol and
-                                        abs(bb - white_color[2]) <= white_tol):
+                                    if (rb == white_color[0] and
+                                        gb == white_color[1] and
+                                        bb == white_color[2]):
                                         white_bottom_y = real_y + row_idx
                                         break
                                 if white_bottom_y is not None:
@@ -1171,9 +1190,9 @@ class FishingBot:
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
                                     rb, gb, bb = int(r), int(g), int(b)
-                                    if (abs(rb - dark_color[0]) <= dark_tol and
-                                        abs(gb - dark_color[1]) <= dark_tol and
-                                        abs(bb - dark_color[2]) <= dark_tol):
+                                    if (rb == dark_color[0] and
+                                        gb == dark_color[1] and
+                                        bb == dark_color[2]):
                                         has_dark = True
                                         break
                                 if has_dark:
