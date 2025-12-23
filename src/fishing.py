@@ -603,6 +603,74 @@ class FishingBot:
         except Exception as e:
             print(f"❌ Detection validation error: {e}")
             return {'is_valid': False, 'confidence': 0.0}
+
+    def auto_locate_bar_area(self, sct, target_color, tolerance):
+        """Fallback: scan a larger region to auto-locate the fishing bar when overlay is misaligned.
+        Returns an area dict {x,y,width,height} or None.
+        """
+        try:
+            # Screen dimensions
+            screen_width = self.app.root.winfo_screenwidth()
+            screen_height = self.app.root.winfo_screenheight()
+
+            # Search central band of the screen to avoid UI and wood floor edges
+            search_left = int(screen_width * 0.25)
+            search_top = int(screen_height * 0.15)
+            search_width = int(screen_width * 0.50)
+            search_height = int(screen_height * 0.55)
+
+            # Convert logical coords to pixel coords for mss
+            monitor = {
+                'left': int(search_left * self._retina_scale),
+                'top': int(search_top * self._retina_scale),
+                'width': int(search_width * self._retina_scale),
+                'height': int(search_height * self._retina_scale)
+            }
+
+            screenshot = sct.grab(monitor)
+            img = np.array(screenshot)
+            if img.shape[2] == 4:
+                img = img[:, :, :3]
+
+            # Coarse scan with stride to reduce cost
+            stride_y = max(2, search_height // 200)
+            stride_x = max(2, search_width // 200)
+
+            found_x = None
+            found_y = None
+            for row_idx in range(0, search_height, stride_y):
+                row = img[row_idx]
+                for col_idx in range(0, search_width, stride_x):
+                    b, g, r = row[col_idx, 0:3]
+                    if (abs(r - target_color[0]) <= tolerance and
+                        abs(g - target_color[1]) <= tolerance and
+                        abs(b - target_color[2]) <= tolerance):
+                        found_x = search_left + col_idx
+                        found_y = search_top + row_idx
+                        break
+                if found_x is not None:
+                    break
+
+            if found_x is None:
+                return None
+
+            # Build a reasonable area around the found pixel (matches typical bar size)
+            area_width = 200
+            area_height = 375
+            # Convert back to logical coords from pixel coords
+            area_x = max(0, int((found_x - (area_width // 2)) / self._retina_scale))
+            area_y = max(0, int((found_y - (area_height // 2)) / self._retina_scale))
+
+            # Clamp within screen
+            area_x = min(area_x, screen_width - area_width)
+            area_y = min(area_y, screen_height - area_height)
+
+            auto_area = {'x': int(area_x), 'y': int(area_y), 'width': area_width, 'height': area_height}
+            print(f"📍 Auto-located bar area: x={auto_area['x']}, y={auto_area['y']}, w={auto_area['width']}, h={auto_area['height']}")
+            return auto_area
+        except Exception as e:
+            print(f"⚠️ Auto-locate error: {e}")
+            return None
     
     def calculate_smart_control_zones(self, dark_sections, white_top_y, real_height):
         """Calculate smart control zones with weighted scoring"""
@@ -639,7 +707,8 @@ class FishingBot:
     def run_main_loop(self, skip_initial_setup=False):
         """Main fishing loop with enhanced smart detection and control"""
         print('🎣 Main loop started with enhanced smart detection')
-        target_color = (69, 136, 229)  # (R, G, B) order - actual fishing bar color detected
+        # Align target color with working Windows version (RGB)
+        target_color = (85, 170, 255)
         dark_color = (25, 25, 25)
         white_color = (255, 255, 255)
         
@@ -659,6 +728,18 @@ class FishingBot:
                     self.perform_initial_setup()
                 else:
                     print("🔧 Skipping initial setup - resuming from current state")
+
+                # Log Retina scale once for debugging
+                try:
+                    main_monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+                    px_w = main_monitor['width']
+                    logical_w = self.app.root.winfo_screenwidth()
+                    if logical_w:
+                        self._retina_scale = max(1.0, px_w / float(logical_w))
+                    # Scale detection for macOS Retina displays
+                    print(f"🖥️ Retina scale detected: {self._retina_scale:.2f}")
+                except Exception as e:
+                    print(f"⚠️ Retina scale detection error: {e}")
                 
                 # Start watchdog AFTER initial setup to prevent interference
                 if not self.watchdog_active:
@@ -710,6 +791,9 @@ class FishingBot:
                         detection_start_time = time.time()
                         last_spawn_check = time.time()
                         spawn_check_interval = 4.0  # Check for spawns every 4 seconds (lightweight)
+                        # Allow one global auto-locate attempt per cycle
+                        global_bar_search_attempted = False
+                        override_bar_area = None
                         
                         while self.app.main_loop_active and not self.force_stop_flag:
                             # Update heartbeat frequently during detection
@@ -794,8 +878,8 @@ class FishingBot:
                             
                             # Get screenshot with error handling
                             try:
-                                # Use bar layout area for fishing detection
-                                bar_area = self.app.layout_manager.get_layout_area('bar')
+                                # Use bar layout area for fishing detection, unless overridden by auto-locate
+                                bar_area = override_bar_area or self.app.layout_manager.get_layout_area('bar')
                                 if not bar_area:
                                     # Default bar area if not set
                                     bar_area = {'x': 700, 'y': 400, 'width': 200, 'height': 100}
@@ -809,8 +893,14 @@ class FishingBot:
                                 y = bar_area['y']
                                 width = bar_area['width']
                                 height = bar_area['height']
-                                monitor = {'left': x, 'top': y, 'width': width, 'height': height}
-                                screenshot = sct.grab(monitor)
+                                # Scale coordinates for macOS Retina (logical -> pixels)
+                                monitor_px = {
+                                    'left': int(x * self._retina_scale),
+                                    'top': int(y * self._retina_scale),
+                                    'width': int(width * self._retina_scale),
+                                    'height': int(height * self._retina_scale)
+                                }
+                                screenshot = sct.grab(monitor_px)
                                 img = np.array(screenshot)
                                 
                                 # Convert BGRA to BGR (remove alpha channel if present)
@@ -834,16 +924,17 @@ class FishingBot:
                                 point1_x = None
                                 point1_y = None
                                 found_first = False
-                                tolerance = 5  # Allow ±5 variance per channel for Retina display color shifts
+                                tolerance = 7  # Allow ±7 variance per channel for Retina display color shifts
                                 
                                 # Scan for color match with tolerance
                                 for row_idx in range(height):
                                     for col_idx in range(width):
                                         b, g, r = img[row_idx, col_idx, 0:3]
+                                        rb, gb, bb = int(r), int(g), int(b)
                                         # Match with tolerance to handle Retina color profile shifts
-                                        if (abs(r - target_color[0]) <= tolerance and 
-                                            abs(g - target_color[1]) <= tolerance and 
-                                            abs(b - target_color[2]) <= tolerance):
+                                        if (abs(rb - target_color[0]) <= tolerance and 
+                                            abs(gb - target_color[1]) <= tolerance and 
+                                            abs(bb - target_color[2]) <= tolerance):
                                             point1_x = x + col_idx
                                             point1_y = y + row_idx
                                             found_first = True
@@ -875,6 +966,22 @@ class FishingBot:
                                 detected = True
                             else:
                                 # No blue bar found
+                                # Try one-time global auto-locate if overlay area might be wrong
+                                if (not detected and not global_bar_search_attempted and
+                                    time.time() - cast_time > 0.7):
+                                    try:
+                                        auto_area = self.auto_locate_bar_area(sct, target_color, tolerance)
+                                        global_bar_search_attempted = True
+                                        if auto_area:
+                                            override_bar_area = auto_area
+                                            # Continue loop to re-scan with new area
+                                            time.sleep(0.05)
+                                            continue
+                                        else:
+                                            print('⚠️ Global auto-locate did not find the bar. Continuing...')
+                                    except Exception as e:
+                                        print(f'⚠️ Global search error: {e}')
+
                                 if not detected and time.time() - cast_time > self.app.scan_timeout:
                                     print(f'Cast timeout after {self.app.scan_timeout}s, recasting...')
                                     # Reselect bait in case we ran out (recovery feature)
@@ -930,9 +1037,10 @@ class FishingBot:
                             row_idx = point1_y - y
                             for col_idx in range(width - 1, -1, -1):
                                 b, g, r = img[row_idx, col_idx, 0:3]
-                                if (abs(r - target_color[0]) <= tolerance and 
-                                    abs(g - target_color[1]) <= tolerance and 
-                                    abs(b - target_color[2]) <= tolerance):
+                                rb, gb, bb = int(r), int(g), int(b)
+                                if (abs(rb - target_color[0]) <= tolerance and 
+                                    abs(gb - target_color[1]) <= tolerance and 
+                                    abs(bb - target_color[2]) <= tolerance):
                                     point2_x = x + col_idx
                                     break
 
@@ -956,8 +1064,13 @@ class FishingBot:
                                 print(f"⚠️ Final bar width too narrow ({temp_area_width}px); skipping detection.")
                                 time.sleep(0.1)
                                 continue
-                            temp_monitor = {'left': temp_area_x, 'top': y, 'width': temp_area_width, 'height': height}
-                            temp_screenshot = sct.grab(temp_monitor)
+                            temp_monitor_px = {
+                                'left': int(temp_area_x * self._retina_scale),
+                                'top': int(y * self._retina_scale),
+                                'width': int(temp_area_width * self._retina_scale),
+                                'height': int(height * self._retina_scale)
+                            }
+                            temp_screenshot = sct.grab(temp_monitor_px)
                             temp_img = np.array(temp_screenshot)
                             # Convert BGRA to BGR (remove alpha channel if present)
                             if temp_img.shape[2] == 4:
@@ -973,9 +1086,10 @@ class FishingBot:
                                 found_dark = False
                                 for col_idx in range(temp_area_width):
                                     b, g, r = temp_img[row_idx, col_idx, 0:3]
-                                    if (abs(r - dark_color[0]) <= 20 and
-                                        abs(g - dark_color[1]) <= 20 and
-                                        abs(b - dark_color[2]) <= 20):
+                                    rb, gb, bb = int(r), int(g), int(b)
+                                    if (abs(rb - dark_color[0]) <= 20 and
+                                        abs(gb - dark_color[1]) <= 20 and
+                                        abs(bb - dark_color[2]) <= 20):
                                         top_y = y + row_idx
                                         found_dark = True
                                         break
@@ -987,9 +1101,10 @@ class FishingBot:
                                 found_dark = False
                                 for col_idx in range(temp_area_width):
                                     b, g, r = temp_img[row_idx, col_idx, 0:3]
-                                    if (abs(r - dark_color[0]) <= 20 and
-                                        abs(g - dark_color[1]) <= 20 and
-                                        abs(b - dark_color[2]) <= 20):
+                                    rb, gb, bb = int(r), int(g), int(b)
+                                    if (abs(rb - dark_color[0]) <= 20 and
+                                        abs(gb - dark_color[1]) <= 20 and
+                                        abs(bb - dark_color[2]) <= 20):
                                         bottom_y = y + row_idx
                                         found_dark = True
                                         break
@@ -1006,8 +1121,13 @@ class FishingBot:
                             real_y = self.app.real_area['y']
                             real_width = self.app.real_area['width']
                             real_height = self.app.real_area['height']
-                            real_monitor = {'left': real_x, 'top': real_y, 'width': real_width, 'height': real_height}
-                            real_screenshot = sct.grab(real_monitor)
+                            real_monitor_px = {
+                                'left': int(real_x * self._retina_scale),
+                                'top': int(real_y * self._retina_scale),
+                                'width': int(real_width * self._retina_scale),
+                                'height': int(real_height * self._retina_scale)
+                            }
+                            real_screenshot = sct.grab(real_monitor_px)
                             real_img = np.array(real_screenshot)
                             # Convert BGRA to BGR (remove alpha channel if present)
                             if real_img.shape[2] == 4:
@@ -1025,9 +1145,10 @@ class FishingBot:
                             for row_idx in range(real_height):
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
-                                    if (abs(r - white_color[0]) <= 30 and
-                                        abs(g - white_color[1]) <= 30 and
-                                        abs(b - white_color[2]) <= 30):
+                                    rb, gb, bb = int(r), int(g), int(b)
+                                    if (abs(rb - white_color[0]) <= 30 and
+                                        abs(gb - white_color[1]) <= 30 and
+                                        abs(bb - white_color[2]) <= 30):
                                         white_top_y = real_y + row_idx
                                         break
                                 if white_top_y is not None:
@@ -1036,9 +1157,10 @@ class FishingBot:
                             for row_idx in range(real_height - 1, -1, -1):
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
-                                    if (abs(r - white_color[0]) <= 30 and
-                                        abs(g - white_color[1]) <= 30 and
-                                        abs(b - white_color[2]) <= 30):
+                                    rb, gb, bb = int(r), int(g), int(b)
+                                    if (abs(rb - white_color[0]) <= 30 and
+                                        abs(gb - white_color[1]) <= 30 and
+                                        abs(bb - white_color[2]) <= 30):
                                         white_bottom_y = real_y + row_idx
                                         break
                                 if white_bottom_y is not None:
@@ -1059,9 +1181,10 @@ class FishingBot:
                                 has_dark = False
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
-                                    if (abs(r - dark_color[0]) <= 20 and
-                                        abs(g - dark_color[1]) <= 20 and
-                                        abs(b - dark_color[2]) <= 20):
+                                    rb, gb, bb = int(r), int(g), int(b)
+                                    if (abs(rb - dark_color[0]) <= 20 and
+                                        abs(gb - dark_color[1]) <= 20 and
+                                        abs(bb - dark_color[2]) <= 20):
                                         has_dark = True
                                         break
                                 if has_dark:
