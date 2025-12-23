@@ -26,7 +26,6 @@ try:
     from src.layout_manager import LayoutManager
 except ImportError:
     from themes import ThemeManager
-    from fishingwindowsversion import FishingBot
     from layout_manager import LayoutManager
 
 class ToolTip:
