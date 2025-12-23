@@ -34,7 +34,7 @@ class FishingBot:
 
     def _is_dark_pixel(self, rgb_tuple):
         r, g, b = rgb_tuple
-        threshold = 100  
+        threshold = 75 
         return r < threshold and g < threshold and b < threshold
 
     def _is_white_pixel(self, rgb_tuple):
@@ -1177,9 +1177,7 @@ class FishingBot:
                                 for col_idx in range(real_width):
                                     b, g, r = real_img[row_idx, col_idx, 0:3]
                                     rb, gb, bb = int(r), int(g), int(b)
-                                    if (rb == dark_color[0] and
-                                        gb == dark_color[1] and
-                                        bb == dark_color[2]):
+                                    if self._is_dark_pixel((rb, gb, bb)):
                                         has_dark = True
                                         break
                                 if has_dark:
@@ -1191,12 +1189,18 @@ class FishingBot:
                                         gap_counter += 1
                                         if gap_counter > max_gap:
                                             section_end = real_y + row_idx - gap_counter
-                                            dark_sections.append({'start': current_section_start, 'end': section_end, 'middle': (current_section_start + section_end) // 2})
+                                            section_height = section_end - current_section_start + 1
+                                            # Filter: ignore noise sections smaller than 8px
+                                            if section_height >= 8:
+                                                dark_sections.append({'start': current_section_start, 'end': section_end, 'middle': (current_section_start + section_end) // 2})
                                             current_section_start = None
                                             gap_counter = 0
                             if current_section_start is not None:
                                 section_end = real_y + real_height - 1 - gap_counter
-                                dark_sections.append({'start': current_section_start, 'end': section_end, 'middle': (current_section_start + section_end) // 2})
+                                section_height = section_end - current_section_start + 1
+                                # Filter: ignore noise sections smaller than 8px
+                                if section_height >= 8:
+                                    dark_sections.append({'start': current_section_start, 'end': section_end, 'middle': (current_section_start + section_end) // 2})
 
                             # PD control once signals present
                             if dark_sections and white_top_y is not None:
