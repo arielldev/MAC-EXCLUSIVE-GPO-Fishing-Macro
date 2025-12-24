@@ -788,552 +788,557 @@ class FishingBot:
                 
                 # Main fishing loop
                 while self.app.main_loop_active and not self.force_stop_flag:
-                    consecutive_recasts = 0
-                    # Update heartbeat for watchdog
-                    self.update_heartbeat()
-                    
-                    # Check if loop should continue
-                    if not self.app.main_loop_active:
-                        print('🛑 Main loop stopped - main_loop_active is False')
-                        break
-                    if self.force_stop_flag:
-                        print('🛑 Main loop stopped - force_stop_flag is True')
-                        break
-                    
-                    try:
-                        print(f'🎣 Fishing cycle #{self.app.fish_count + 1}')
-                        
-                        # Cast line (bait selection already done in initial setup)
-                        # Ensure mouse is not held from prior loop
-                        if self.app.is_clicking:
-                            try:
-                                self.mouse.release(pynput_mouse.Button.left)
-                            except Exception:
-                                pass
-                            self.app.is_clicking = False
+                    # Allow at most one recast per cycle to prevent spam (initial cast + one retry)
+                    max_cast_attempts = 2
+                    cast_attempts = 0
+                    cycle_complete = False
 
-                        self.app.set_recovery_state("casting", {"action": "initial_cast"})
-                        self.cast_line()
-                        cast_time = time.time()
-                        
-                        # Small delay to ensure rod is properly cast
-                        time.sleep(0.5)
-                        
-                        # Enter detection phase
-                        self.app.set_recovery_state("fishing", {"action": "blue_bar_detection"})
-                        detected = False
-                        was_detecting = False
-                        # Require a stable detection window before enabling clicks
-                        control_armed = False
-                        stable_frames = 0
-                        first_detection_time = None
-                        MIN_CONTROL_DELAY = 0.6  # seconds to wait after cast before any click
-                        print('Scanning for blue fishing bar...')
-                        
-                        detection_start_time = time.time()
-                        last_spawn_check = time.time()
-                        spawn_check_interval = 4.0  # Check for spawns every 4 seconds (lightweight)
-                        # Allow one global auto-locate attempt per cycle
-                        global_bar_search_attempted = False
-                        override_bar_area = None
-                        self.error_smoothing.clear()
-                        self.app.previous_error = 0.0
-                        self.app.previous_error_time = None
-                        
-                        while self.app.main_loop_active and not self.force_stop_flag:
-                            # Update heartbeat frequently during detection
-                            self.update_heartbeat()
-                            
-                            # Periodically check for fruit spawns (with smart cooldown)
-                            # ONLY check when NOT actively fishing (detected == False means waiting for bite)
-                            current_time = time.time()
-                            time_since_last_spawn = current_time - self.last_fruit_spawn_time
-                            
-                            # Only check if: NOT actively fishing AND enough time passed AND outside cooldown
-                            if not detected and current_time - last_spawn_check > spawn_check_interval and time_since_last_spawn > self.fruit_spawn_cooldown:
+                    while (self.app.main_loop_active and not self.force_stop_flag and
+                           cast_attempts < max_cast_attempts and not cycle_complete):
+                        cast_attempts += 1
+                        consecutive_recasts = 0
+                        # Update heartbeat for watchdog
+                        self.update_heartbeat()
+
+                        # Check if loop should continue
+                        if not self.app.main_loop_active:
+                            print('🛑 Main loop stopped - main_loop_active is False')
+                            break
+                        if self.force_stop_flag:
+                            print('🛑 Main loop stopped - force_stop_flag is True')
+                            break
+
+                        try:
+                            print(f'🎣 Fishing cycle #{self.app.fish_count + 1} (cast {cast_attempts}/{max_cast_attempts})')
+
+                            # Cast line (bait selection already done in initial setup)
+                            # Ensure mouse is not held from prior loop
+                            if self.app.is_clicking:
                                 try:
-                                    # Check for spawn text using OCR
-                                    if hasattr(self.app, 'ocr_manager') and self.app.ocr_manager.is_available():
-                                        # Temporarily disable OCR cooldown for spawn checks
-                                        original_cooldown = self.app.ocr_manager.capture_cooldown
-                                        self.app.ocr_manager.capture_cooldown = 0.1  # Very short cooldown for spawn detection
-                                        
-                                        spawn_text = self.app.ocr_manager.extract_text()
-                                        
-                                        # Restore original cooldown
-                                        self.app.ocr_manager.capture_cooldown = original_cooldown
-                                        
-                                        if spawn_text:
-                                            print(f"🔍 Spawn check OCR result: {spawn_text}")
-                                            fruit_name = self.app.ocr_manager.detect_fruit_spawn(spawn_text)
-                                            if fruit_name:
-                                                print(f"🌟 Devil fruit spawn detected: {fruit_name}")
-                                                # Record detection time for cooldown
-                                                self.last_fruit_spawn_time = current_time
-                                                print(f"⏰ Fruit spawn cooldown activated - won't check again for 15 minutes")
-                                                # Send webhook
-                                                if hasattr(self.app, 'webhook_manager') and getattr(self.app, 'fruit_spawn_webhook_enabled', True):
-                                                    self.app.webhook_manager.send_fruit_spawn(fruit_name)
-                                    
-                                    last_spawn_check = current_time
-                                except Exception as spawn_error:
-                                    print(f"⚠️ Spawn check error: {spawn_error}")
-                            elif time_since_last_spawn <= self.fruit_spawn_cooldown:
-                                # Still in cooldown period, skip checking
-                                pass
-                            
-                            # Smart adaptive timeout system
-                            current_time = time.time()
-                            
-                            # Calculate adaptive timeout based on success rate
-                            base_timeout = self.app.scan_timeout
-                            if self.fishing_success_rate > 0.7:
-                                # High success rate - can wait longer for fish
-                                adaptive_timeout = base_timeout * 1.3
-                            elif self.fishing_success_rate < 0.4:
-                                # Low success rate - shorter timeout to try more frequently
-                                adaptive_timeout = base_timeout * 0.7
-                            else:
-                                adaptive_timeout = base_timeout
-                            
-                            if current_time - detection_start_time > adaptive_timeout:
-                                if not detected:
-                                    print(f'⏰ No fish detected after {adaptive_timeout:.1f}s (adaptive), recasting...')
-                                    consecutive_recasts += 1
-                                    # Throttle recasts to avoid rapid spam
-                                    time.sleep(1.5)
-                                    if consecutive_recasts >= 2:
-                                        print('⏸️ Too many recasts without detection; pausing loop. Toggle start to retry.')
-                                        self.app.main_loop_active = False
-                                        break
-                                    # Track failed attempt
-                                    self.recent_catches.append(False)
-                                    if len(self.recent_catches) > 10:
-                                        self.recent_catches.pop(0)
-                                    self.fishing_success_rate = sum(self.recent_catches) / len(self.recent_catches)
-                                    break
-                                elif current_time - detection_start_time > adaptive_timeout + 15:
-                                    print(f'⏰ Fish control timeout after {adaptive_timeout + 15:.1f}s, recasting...')
-                                    # Clean up mouse state before recasting
-                                    if self.app.is_clicking:
-                                        try:
-                                            self.mouse.release(pynput_mouse.Button.left)
-                                        except Exception:
-                                            pass
-                                        self.app.is_clicking = False
-                                    consecutive_recasts += 1
-                                    # Throttle recasts to avoid rapid spam
-                                    time.sleep(1.5)
-                                    if consecutive_recasts >= 2:
-                                        print('⏸️ Too many recasts without control; pausing loop. Toggle start to retry.')
-                                        self.app.main_loop_active = False
-                                        break
-                                    # Track failed attempt
-                                    self.recent_catches.append(False)
-                                    if len(self.recent_catches) > 10:
-                                        self.recent_catches.pop(0)
-                                    self.fishing_success_rate = sum(self.recent_catches) / len(self.recent_catches)
-                                    break
-                            
-                            # Get screenshot with error handling
-                            try:
-                                # Use bar layout area for fishing detection, unless overridden by auto-locate
-                                bar_area = override_bar_area or self.app.layout_manager.get_layout_area('bar')
-                                if not bar_area:
-                                    # Default bar area if not set
-                                    bar_area = {'x': 700, 'y': 400, 'width': 200, 'height': 100}
-                                    print(f'⚠️ WARNING: Using default bar area {bar_area} - Position overlay properly!')
-                                else:
-                                    # Only log once at start
-                                    if not detected and time.time() - cast_time < 1.0:
-                                        print(f'📍 Bar detection area: x={bar_area["x"]}, y={bar_area["y"]}, w={bar_area["width"]}, h={bar_area["height"]}')
-                                
-                                x = bar_area['x']
-                                y = bar_area['y']
-                                width = bar_area['width']
-                                height = bar_area['height']
-                                # Scale coordinates for macOS Retina (logical -> pixels)
-                                monitor_px = {
-                                    'left': int(x * self._retina_scale),
-                                    'top': int(y * self._retina_scale),
-                                    'width': int(width * self._retina_scale),
-                                    'height': int(height * self._retina_scale)
-                                }
-                                screenshot = sct.grab(monitor_px)
-                                img = np.array(screenshot)
-                                
-                                # Convert BGRA to BGR (remove alpha channel if present)
-                                if img.shape[2] == 4:
-                                    img = img[:, :, :3]
-                                
-                                # Normalize for macOS Retina scaling
-                                img_h, img_w = img.shape[0], img.shape[1]
-                                if img_w != width or img_h != height:
-                                    scale_w = img_w / float(width)
-                                    scale_h = img_h / float(height)
-                                    self._retina_scale = (scale_w + scale_h) / 2.0
-                                    img = cv2.resize(img, (width, height), interpolation=cv2.INTER_NEAREST)
-                                
-                                # Auto-sample bar color on first screenshot if target_color not set
-                                if first_bar_area_screenshot and target_color is None:
-                                    first_bar_area_screenshot = False
-                                    # Sample dominant light-blue-ish color in the bar area
-                                    color_counts = {}
-                                    for row_idx in range(height):
-                                        for col_idx in range(width):
-                                            b, g, r = img[row_idx, col_idx, 0:3]
-                                            # Only count bright cyan/blue pixels (R or G high, B very high)
-                                            if (int(b) > 150 and (int(r) > 100 or int(g) > 100)):
-                                                color_tuple = (int(r), int(g), int(b))
-                                                color_counts[color_tuple] = color_counts.get(color_tuple, 0) + 1
-                                    if color_counts:
-                                        target_color = max(color_counts.items(), key=lambda x: x[1])[0]
-                                        print(f'✅ Auto-detected bar color (RGB): {target_color}')
-                                    else:
-                                        # Fallback to Windows color
-                                        target_color = (85, 170, 255)
-                                        print(f'⚠️ No bright blue detected; using fallback color {target_color}')
-                            except Exception as screenshot_error:
-                                print(f'❌ Screenshot error: {screenshot_error}')
-                                time.sleep(0.1)
-                                continue
-                            
-                            # Use the full user-defined bar layout as the bar region (simpler, robust)
-                            found_first = True
-                            point1_x = x
-                            point1_y = y
-                            point2_x = x + width - 1
-                            
-                            if found_first:
-                                detected = True
-                            else:
-                                # No blue bar found
-                                # Try one-time global auto-locate if overlay area might be wrong
-                                if (not detected and not global_bar_search_attempted and
-                                    time.time() - cast_time > 0.7):
+                                    self.mouse.release(pynput_mouse.Button.left)
+                                except Exception:
+                                    pass
+                                self.app.is_clicking = False
+
+                            self.app.set_recovery_state("casting", {"action": "initial_cast"})
+                            self.cast_line()
+                            cast_time = time.time()
+
+                            # Small delay to ensure rod is properly cast
+                            time.sleep(0.5)
+
+                            # Enter detection phase
+                            self.app.set_recovery_state("fishing", {"action": "blue_bar_detection"})
+                            detected = False
+                            was_detecting = False
+                            # Require a stable detection window before enabling clicks
+                            control_armed = False
+                            stable_frames = 0
+                            first_detection_time = None
+                            MIN_CONTROL_DELAY = 0.6  # seconds to wait after cast before any click
+                            print('Scanning for blue fishing bar...')
+
+                            detection_start_time = time.time()
+                            last_spawn_check = time.time()
+                            spawn_check_interval = 4.0  # Check for spawns every 4 seconds (lightweight)
+                            # Allow one global auto-locate attempt per cycle
+                            global_bar_search_attempted = False
+                            override_bar_area = None
+                            self.error_smoothing.clear()
+                            self.app.previous_error = 0.0
+                            self.app.previous_error_time = None
+
+                            while self.app.main_loop_active and not self.force_stop_flag:
+                                # Update heartbeat frequently during detection
+                                self.update_heartbeat()
+
+                                # Periodically check for fruit spawns (with smart cooldown)
+                                # ONLY check when NOT actively fishing (detected == False means waiting for bite)
+                                current_time = time.time()
+                                time_since_last_spawn = current_time - self.last_fruit_spawn_time
+
+                                # Only check if: NOT actively fishing AND enough time passed AND outside cooldown
+                                if not detected and current_time - last_spawn_check > spawn_check_interval and time_since_last_spawn > self.fruit_spawn_cooldown:
                                     try:
-                                        auto_area = self.auto_locate_bar_area(sct, target_color)
-                                        global_bar_search_attempted = True
-                                        if auto_area:
-                                            override_bar_area = auto_area
-                                            # Continue loop to re-scan with new area
-                                            time.sleep(0.05)
-                                            continue
-                                        else:
-                                            print('⚠️ Global auto-locate did not find the bar. Continuing...')
-                                    except Exception as e:
-                                        print(f'⚠️ Global search error: {e}')
+                                        # Check for spawn text using OCR
+                                        if hasattr(self.app, 'ocr_manager') and self.app.ocr_manager.is_available():
+                                            # Temporarily disable OCR cooldown for spawn checks
+                                            original_cooldown = self.app.ocr_manager.capture_cooldown
+                                            self.app.ocr_manager.capture_cooldown = 0.1  # Very short cooldown for spawn detection
 
-                                if not detected and time.time() - cast_time > self.app.scan_timeout:
-                                    print(f'Cast timeout after {self.app.scan_timeout}s, recasting...')
-                                    # Reselect bait in case we ran out (recovery feature)
-                                    if hasattr(self.app, 'bait_manager') and self.app.bait_manager.is_enabled():
-                                        print("🔄 Reselecting bait (may have run out)")
-                                        self.app.bait_manager.select_top_bait()
-                                    # Ensure no mouse press sticks between casts
-                                    if self.app.is_clicking:
-                                        try:
-                                            self.mouse.release(pynput_mouse.Button.left)
-                                        except Exception:
-                                            pass
-                                        self.app.is_clicking = False
-                                    time.sleep(0.3)
-                                    break
-                                
-                                if was_detecting:
-                                    print('Fish caught! Processing...')
-                                    
-                                    # Clean up mouse state immediately
-                                    if self.app.is_clicking:
-                                        try:
-                                            self.mouse.release(pynput_mouse.Button.left)
-                                        except Exception:
-                                            pass
-                                        self.app.is_clicking = False
-                                    
-                                    # Track successful catch for adaptive learning
-                                    self.recent_catches.append(True)
-                                    if len(self.recent_catches) > 10:
-                                        self.recent_catches.pop(0)
-                                    self.fishing_success_rate = sum(self.recent_catches) / len(self.recent_catches)
-                                    
-                                    # Increment fish counter when fish is actually caught
-                                    self.app.increment_fish_counter()
-                                    consecutive_recasts = 0
-                                    
-                                    # Complete post-catch workflow
-                                    self.process_post_catch_workflow()
-                                    
-                                    time.sleep(self.app.wait_after_loss)
-                                    was_detecting = False
-                                    self.check_and_purchase()
-                                    # Continue to next fishing cycle
-                                    success_pct = int(self.fishing_success_rate * 100)
-                                    print(f'🐟 Fish processing complete | Success Rate: {success_pct}%')
-                                    break
-                                
-                                time.sleep(0.1)
-                                continue
-                            
-                            # Right edge is the bar layout's right boundary
-                            # (We rely on white/dark detection inside this window.)
+                                            spawn_text = self.app.ocr_manager.extract_text()
 
-                            # Always use the full bar layout window as the real detection area
-                            detected_bar_width = width
-                            temp_area_x = x
-                            temp_area_width = width
-                            temp_area_top = y
-                            temp_area_height = height
-                            
-                            # Print debug info for bar detection
-                            print(f"[DEBUG] Bar layout area: x={x}, y={y}, w={width}, h={height} | Detected bar: x={temp_area_x}, w={temp_area_width}")
+                                            # Restore original cooldown
+                                            self.app.ocr_manager.capture_cooldown = original_cooldown
 
-                            if temp_area_width < 2 or temp_area_height < 40:
-                                print(f"⚠️ Final bar too small (w={temp_area_width}, h={temp_area_height}); skipping.")
-                                time.sleep(0.1)
-                                continue
+                                            if spawn_text:
+                                                print(f"🔍 Spawn check OCR result: {spawn_text}")
+                                                fruit_name = self.app.ocr_manager.detect_fruit_spawn(spawn_text)
+                                                if fruit_name:
+                                                    print(f"🌟 Devil fruit spawn detected: {fruit_name}")
+                                                    # Record detection time for cooldown
+                                                    self.last_fruit_spawn_time = current_time
+                                                    print(f"⏰ Fruit spawn cooldown activated - won't check again for 15 minutes")
+                                                    # Send webhook
+                                                    if hasattr(self.app, 'webhook_manager') and getattr(self.app, 'fruit_spawn_webhook_enabled', True):
+                                                        self.app.webhook_manager.send_fruit_spawn(fruit_name)
 
-                            # Capture cropped bar image
-                            temp_monitor_px = {
-                                'left': int(temp_area_x * self._retina_scale),
-                                'top': int(temp_area_top * self._retina_scale),
-                                'width': int(temp_area_width * self._retina_scale),
-                                'height': int(temp_area_height * self._retina_scale)
-                            }
-                            temp_screenshot = sct.grab(temp_monitor_px)
-                            temp_img = np.array(temp_screenshot)
-                            if temp_img.shape[2] == 4:
-                                temp_img = temp_img[:, :, :3]
-                            t_h, t_w = temp_img.shape[0], temp_img.shape[1]
-                            if t_w != temp_area_width or t_h != temp_area_height:
-                                temp_img = cv2.resize(temp_img, (temp_area_width, temp_area_height), interpolation=cv2.INTER_NEAREST)
+                                        last_spawn_check = current_time
+                                    except Exception as spawn_error:
+                                        print(f"⚠️ Spawn check error: {spawn_error}")
+                                elif time_since_last_spawn <= self.fruit_spawn_cooldown:
+                                    # Still in cooldown period, skip checking
+                                    pass
 
-                            # Find top and bottom of dark area (tolerant dark detection)
-                            top_y = None
-                            for row_idx in range(temp_area_height):
-                                found_dark = False
-                                for col_idx in range(temp_area_width):
-                                    b, g, r = temp_img[row_idx, col_idx, 0:3]
-                                    rb, gb, bb = int(r), int(g), int(b)
-                                    if self._is_dark_pixel((rb, gb, bb)):
-                                        top_y = temp_area_top + row_idx
-                                        found_dark = True
-                                        break
-                                if found_dark:
-                                    break
+                                # Smart adaptive timeout system
+                                current_time = time.time()
 
-                            bottom_y = None
-                            for row_idx in range(temp_area_height - 1, -1, -1):
-                                found_dark = False
-                                for col_idx in range(temp_area_width):
-                                    b, g, r = temp_img[row_idx, col_idx, 0:3]
-                                    rb, gb, bb = int(r), int(g), int(b)
-                                    if self._is_dark_pixel((rb, gb, bb)):
-                                        bottom_y = temp_area_top + row_idx
-                                        found_dark = True
-                                        break
-                                if found_dark:
-                                    break
-
-                            if top_y is None or bottom_y is None:
-                                time.sleep(0.1)
-                                continue
-
-                            # Real fishing area crop
-                            self.app.real_area = {
-                                'x': temp_area_x,
-                                'y': top_y,
-                                'width': temp_area_width,
-                                'height': bottom_y - top_y + 1
-                            }
-                            real_x = self.app.real_area['x']
-                            real_y = self.app.real_area['y']
-                            real_width = self.app.real_area['width']
-                            real_height = self.app.real_area['height']
-                            real_monitor_px = {
-                                'left': int(real_x * self._retina_scale),
-                                'top': int(real_y * self._retina_scale),
-                                'width': int(real_width * self._retina_scale),
-                                'height': int(real_height * self._retina_scale)
-                            }
-                            real_screenshot = sct.grab(real_monitor_px)
-                            real_img = np.array(real_screenshot)
-                            if real_img.shape[2] == 4:
-                                real_img = real_img[:, :, :3]
-                            r_h, r_w = real_img.shape[0], real_img.shape[1]
-                            if r_w != real_width or r_h != real_height:
-                                real_img = cv2.resize(real_img, (real_width, real_height), interpolation=cv2.INTER_NEAREST)
-
-                            # Find white/green indicator (row-wise tolerant detection)
-                            white_top_y = None
-                            white_bottom_y = None
-                            indicator_rows = []
-                            min_row_hits = max(3, int(real_width * 0.02))  # require at least 2% of row pixels
-                            for row_idx in range(real_height):
-                                hits = 0
-                                for col_idx in range(real_width):
-                                    b, g, r = real_img[row_idx, col_idx, 0:3]
-                                    rb, gb, bb = int(r), int(g), int(b)
-                                    if self._is_indicator_pixel((rb, gb, bb)):
-                                        hits += 1
-                                if hits >= min_row_hits:
-                                    indicator_rows.append(real_y + row_idx)
-
-                            if indicator_rows:
-                                white_top_y = indicator_rows[0]
-                                white_bottom_y = indicator_rows[-1]
-
-                            if white_top_y is not None and white_bottom_y is not None:
-                                white_height = max(1, white_bottom_y - white_top_y + 1)
-                                max_gap = max(3, int(white_height * 2))
-                            else:
-                                print(f"⚠️ White indicator not found (top={white_top_y}, bottom={white_bottom_y}) in real area w={real_width}, h={real_height}")
-                                max_gap = max(3, int(real_height * 0.2))
-
-                            # Find dark sections (fish position) in real_img
-                            dark_sections = []
-                            current_section_start = None
-                            gap_counter = 0
-                            for row_idx in range(real_height):
-                                has_dark = False
-                                for col_idx in range(real_width):
-                                    b, g, r = real_img[row_idx, col_idx, 0:3]
-                                    rb, gb, bb = int(r), int(g), int(b)
-                                    if self._is_dark_pixel((rb, gb, bb)):
-                                        has_dark = True
-                                        break
-                                if has_dark:
-                                    gap_counter = 0
-                                    if current_section_start is None:
-                                        current_section_start = real_y + row_idx
+                                # Calculate adaptive timeout based on success rate
+                                base_timeout = self.app.scan_timeout
+                                if self.fishing_success_rate > 0.7:
+                                    # High success rate - can wait longer for fish
+                                    adaptive_timeout = base_timeout * 1.3
+                                elif self.fishing_success_rate < 0.4:
+                                    # Low success rate - shorter timeout to try more frequently
+                                    adaptive_timeout = base_timeout * 0.7
                                 else:
-                                    if current_section_start is not None:
-                                        gap_counter += 1
-                                        if gap_counter > max_gap:
-                                            section_end = real_y + row_idx - gap_counter
-                                            section_height = section_end - current_section_start + 1
-                                            # Filter: ignore noise sections smaller than 8px
-                                            if section_height >= 8:
-                                                dark_sections.append({'start': current_section_start, 'end': section_end, 'middle': (current_section_start + section_end) // 2})
-                                            current_section_start = None
-                                            gap_counter = 0
-                            if current_section_start is not None:
-                                section_end = real_y + real_height - 1 - gap_counter
-                                section_height = section_end - current_section_start + 1
-                                # Filter: ignore noise sections smaller than 8px
-                                if section_height >= 8:
-                                    dark_sections.append({'start': current_section_start, 'end': section_end, 'middle': (current_section_start + section_end) // 2})
+                                    adaptive_timeout = base_timeout
 
-                            # PD control once signals present
-                            if dark_sections and white_top_y is not None:
-                                if first_detection_time is None:
-                                    first_detection_time = time.time()
-                                stable_frames += 1
+                                if current_time - detection_start_time > adaptive_timeout:
+                                    if not detected:
+                                        print(f'⏰ No fish detected after {adaptive_timeout:.1f}s (adaptive), recasting once...')
+                                        # Track failed attempt
+                                        self.recent_catches.append(False)
+                                        if len(self.recent_catches) > 10:
+                                            self.recent_catches.pop(0)
+                                        self.fishing_success_rate = sum(self.recent_catches) / len(self.recent_catches)
+                                        time.sleep(1.0)
+                                        break  # exit detection loop to allow single retry
+                                    elif current_time - detection_start_time > adaptive_timeout + 15:
+                                        print(f'⏰ Fish control timeout after {adaptive_timeout + 15:.1f}s, recasting once...')
+                                        # Clean up mouse state before recasting
+                                        if self.app.is_clicking:
+                                            try:
+                                                self.mouse.release(pynput_mouse.Button.left)
+                                            except Exception:
+                                                pass
+                                            self.app.is_clicking = False
+                                        # Track failed attempt
+                                        self.recent_catches.append(False)
+                                        if len(self.recent_catches) > 10:
+                                            self.recent_catches.pop(0)
+                                        self.fishing_success_rate = sum(self.recent_catches) / len(self.recent_catches)
+                                        time.sleep(1.0)
+                                        break  # exit detection loop to allow single retry
 
-                                if (not control_armed and
-                                    stable_frames >= 2 and
-                                    time.time() - cast_time >= MIN_CONTROL_DELAY):
-                                    control_armed = True
-                                    was_detecting = True
-                                    print('Fish detected! Starting control...')
-                                    self.app.set_recovery_state("fishing", {"action": "fish_control_active"})
+                                # Get screenshot with error handling
+                                try:
+                                    # Use bar layout area for fishing detection, unless overridden by auto-locate
+                                    bar_area = override_bar_area or self.app.layout_manager.get_layout_area('bar')
+                                    if not bar_area:
+                                        # Default bar area if not set
+                                        bar_area = {'x': 700, 'y': 400, 'width': 200, 'height': 100}
+                                        print(f'⚠️ WARNING: Using default bar area {bar_area} - Position overlay properly!')
+                                    else:
+                                        # Only log once at start
+                                        if not detected and time.time() - cast_time < 1.0:
+                                            print(f'📍 Bar detection area: x={bar_area["x"]}, y={bar_area["y"]}, w={bar_area["width"]}, h={bar_area["height"]}')
 
-                                if not control_armed:
-                                    if self.app.is_clicking:
-                                        try:
-                                            self.mouse.release(pynput_mouse.Button.left)
-                                        except Exception:
-                                            pass
-                                        self.app.is_clicking = False
-                                    time.sleep(0.05)
+                                    x = bar_area['x']
+                                    y = bar_area['y']
+                                    width = bar_area['width']
+                                    height = bar_area['height']
+                                    # Scale coordinates for macOS Retina (logical -> pixels)
+                                    monitor_px = {
+                                        'left': int(x * self._retina_scale),
+                                        'top': int(y * self._retina_scale),
+                                        'width': int(width * self._retina_scale),
+                                        'height': int(height * self._retina_scale)
+                                    }
+                                    screenshot = sct.grab(monitor_px)
+                                    img = np.array(screenshot)
+
+                                    # Convert BGRA to BGR (remove alpha channel if present)
+                                    if img.shape[2] == 4:
+                                        img = img[:, :, :3]
+
+                                    # Normalize for macOS Retina scaling
+                                    img_h, img_w = img.shape[0], img.shape[1]
+                                    if img_w != width or img_h != height:
+                                        scale_w = img_w / float(width)
+                                        scale_h = img_h / float(height)
+                                        self._retina_scale = (scale_w + scale_h) / 2.0
+                                        img = cv2.resize(img, (width, height), interpolation=cv2.INTER_NEAREST)
+
+                                    # Auto-sample bar color on first screenshot if target_color not set
+                                    if first_bar_area_screenshot and target_color is None:
+                                        first_bar_area_screenshot = False
+                                        # Sample dominant light-blue-ish color in the bar area
+                                        color_counts = {}
+                                        for row_idx in range(height):
+                                            for col_idx in range(width):
+                                                b, g, r = img[row_idx, col_idx, 0:3]
+                                                # Only count bright cyan/blue pixels (R or G high, B very high)
+                                                if (int(b) > 150 and (int(r) > 100 or int(g) > 100)):
+                                                    color_tuple = (int(r), int(g), int(b))
+                                                    color_counts[color_tuple] = color_counts.get(color_tuple, 0) + 1
+                                        if color_counts:
+                                            target_color = max(color_counts.items(), key=lambda x: x[1])[0]
+                                            print(f'✅ Auto-detected bar color (RGB): {target_color}')
+                                        else:
+                                            # Fallback to Windows color
+                                            target_color = (85, 170, 255)
+                                            print(f'⚠️ No bright blue detected; using fallback color {target_color}')
+                                except Exception as screenshot_error:
+                                    print(f'❌ Screenshot error: {screenshot_error}')
+                                    time.sleep(0.1)
                                     continue
 
-                                for section in dark_sections:
-                                    section['size'] = section['end'] - section['start'] + 1
-                                largest_section = max(dark_sections, key=lambda s: s['size'])
+                                # Use the full user-defined bar layout as the bar region (simpler, robust)
+                                found_first = True
+                                point1_x = x
+                                point1_y = y
+                                point2_x = x + width - 1
 
-                                raw_error = largest_section['middle'] - white_top_y
-                                normalized_error = raw_error / real_height if real_height > 0 else raw_error
+                                if found_first:
+                                    detected = True
+                                else:
+                                    # No blue bar found
+                                    # Try one-time global auto-locate if overlay area might be wrong
+                                    if (not detected and not global_bar_search_attempted and
+                                        time.time() - cast_time > 0.7):
+                                        try:
+                                            auto_area = self.auto_locate_bar_area(sct, target_color)
+                                            global_bar_search_attempted = True
+                                            if auto_area:
+                                                override_bar_area = auto_area
+                                                # Continue loop to re-scan with new area
+                                                time.sleep(0.05)
+                                                continue
+                                            else:
+                                                print('⚠️ Global auto-locate did not find the bar. Continuing...')
+                                        except Exception as e:
+                                            print(f'⚠️ Global search error: {e}')
 
-                                # Smooth the error to avoid jitter from single noisy frames
-                                self.error_smoothing.append(normalized_error)
-                                if len(self.error_smoothing) > 5:
-                                    self.error_smoothing.pop(0)
-                                smoothed_error = sum(self.error_smoothing) / len(self.error_smoothing)
+                                    if not detected and time.time() - cast_time > self.app.scan_timeout:
+                                        print(f'Cast timeout after {self.app.scan_timeout}s, recasting...')
+                                        # Reselect bait in case we ran out (recovery feature)
+                                        if hasattr(self.app, 'bait_manager') and self.app.bait_manager.is_enabled():
+                                            print("🔄 Reselecting bait (may have run out)")
+                                            self.app.bait_manager.select_top_bait()
+                                        # Ensure no mouse press sticks between casts
+                                        if self.app.is_clicking:
+                                            try:
+                                                self.mouse.release(pynput_mouse.Button.left)
+                                            except Exception:
+                                                pass
+                                            self.app.is_clicking = False
+                                        time.sleep(0.3)
+                                        break
 
-                                now = time.time()
-                                if self.app.previous_error_time is None:
+                                    if was_detecting:
+                                        print('Fish caught! Processing...')
+
+                                        # Clean up mouse state immediately
+                                        if self.app.is_clicking:
+                                            try:
+                                                self.mouse.release(pynput_mouse.Button.left)
+                                            except Exception:
+                                                pass
+                                            self.app.is_clicking = False
+
+                                        # Track successful catch for adaptive learning
+                                        self.recent_catches.append(True)
+                                        if len(self.recent_catches) > 10:
+                                            self.recent_catches.pop(0)
+                                        self.fishing_success_rate = sum(self.recent_catches) / len(self.recent_catches)
+
+                                        # Increment fish counter when fish is actually caught
+                                        self.app.increment_fish_counter()
+                                        consecutive_recasts = 0
+
+                                        # Complete post-catch workflow
+                                        self.process_post_catch_workflow()
+
+                                        time.sleep(self.app.wait_after_loss)
+                                        was_detecting = False
+                                        self.check_and_purchase()
+                                        # Continue to next fishing cycle
+                                        success_pct = int(self.fishing_success_rate * 100)
+                                        print(f'🐟 Fish processing complete | Success Rate: {success_pct}%')
+                                        break
+
+                                    time.sleep(0.1)
+                                    continue
+
+                                # Right edge is the bar layout's right boundary
+                                # (We rely on white/dark detection inside this window.)
+
+                                # Always use the full bar layout window as the real detection area
+                                detected_bar_width = width
+                                temp_area_x = x
+                                temp_area_width = width
+                                temp_area_top = y
+                                temp_area_height = height
+
+                                # Print debug info for bar detection
+                                print(f"[DEBUG] Bar layout area: x={x}, y={y}, w={width}, h={height} | Detected bar: x={temp_area_x}, w={temp_area_width}")
+
+                                if temp_area_width < 2 or temp_area_height < 40:
+                                    print(f"⚠️ Final bar too small (w={temp_area_width}, h={temp_area_height}); skipping.")
+                                    time.sleep(0.1)
+                                    continue
+
+                                # Capture cropped bar image
+                                temp_monitor_px = {
+                                    'left': int(temp_area_x * self._retina_scale),
+                                    'top': int(temp_area_top * self._retina_scale),
+                                    'width': int(temp_area_width * self._retina_scale),
+                                    'height': int(temp_area_height * self._retina_scale)
+                                }
+                                temp_screenshot = sct.grab(temp_monitor_px)
+                                temp_img = np.array(temp_screenshot)
+                                if temp_img.shape[2] == 4:
+                                    temp_img = temp_img[:, :, :3]
+                                t_h, t_w = temp_img.shape[0], temp_img.shape[1]
+                                if t_w != temp_area_width or t_h != temp_area_height:
+                                    temp_img = cv2.resize(temp_img, (temp_area_width, temp_area_height), interpolation=cv2.INTER_NEAREST)
+
+                                # Find top and bottom of dark area (tolerant dark detection)
+                                top_y = None
+                                for row_idx in range(temp_area_height):
+                                    found_dark = False
+                                    for col_idx in range(temp_area_width):
+                                        b, g, r = temp_img[row_idx, col_idx, 0:3]
+                                        rb, gb, bb = int(r), int(g), int(b)
+                                        if self._is_dark_pixel((rb, gb, bb)):
+                                            top_y = temp_area_top + row_idx
+                                            found_dark = True
+                                            break
+                                    if found_dark:
+                                        break
+
+                                bottom_y = None
+                                for row_idx in range(temp_area_height - 1, -1, -1):
+                                    found_dark = False
+                                    for col_idx in range(temp_area_width):
+                                        b, g, r = temp_img[row_idx, col_idx, 0:3]
+                                        rb, gb, bb = int(r), int(g), int(b)
+                                        if self._is_dark_pixel((rb, gb, bb)):
+                                            bottom_y = temp_area_top + row_idx
+                                            found_dark = True
+                                            break
+                                    if found_dark:
+                                        break
+
+                                if top_y is None or bottom_y is None:
+                                    time.sleep(0.1)
+                                    continue
+
+                                # Real fishing area crop
+                                self.app.real_area = {
+                                    'x': temp_area_x,
+                                    'y': top_y,
+                                    'width': temp_area_width,
+                                    'height': bottom_y - top_y + 1
+                                }
+                                real_x = self.app.real_area['x']
+                                real_y = self.app.real_area['y']
+                                real_width = self.app.real_area['width']
+                                real_height = self.app.real_area['height']
+                                real_monitor_px = {
+                                    'left': int(real_x * self._retina_scale),
+                                    'top': int(real_y * self._retina_scale),
+                                    'width': int(real_width * self._retina_scale),
+                                    'height': int(real_height * self._retina_scale)
+                                }
+                                real_screenshot = sct.grab(real_monitor_px)
+                                real_img = np.array(real_screenshot)
+                                if real_img.shape[2] == 4:
+                                    real_img = real_img[:, :, :3]
+                                r_h, r_w = real_img.shape[0], real_img.shape[1]
+                                if r_w != real_width or r_h != real_height:
+                                    real_img = cv2.resize(real_img, (real_width, real_height), interpolation=cv2.INTER_NEAREST)
+
+                                # Find white/green indicator (row-wise tolerant detection)
+                                white_top_y = None
+                                white_bottom_y = None
+                                indicator_rows = []
+                                min_row_hits = max(3, int(real_width * 0.02))  # require at least 2% of row pixels
+                                for row_idx in range(real_height):
+                                    hits = 0
+                                    for col_idx in range(real_width):
+                                        b, g, r = real_img[row_idx, col_idx, 0:3]
+                                        rb, gb, bb = int(r), int(g), int(b)
+                                        if self._is_indicator_pixel((rb, gb, bb)):
+                                            hits += 1
+                                    if hits >= min_row_hits:
+                                        indicator_rows.append(real_y + row_idx)
+
+                                if indicator_rows:
+                                    white_top_y = indicator_rows[0]
+                                    white_bottom_y = indicator_rows[-1]
+
+                                if white_top_y is not None and white_bottom_y is not None:
+                                    white_height = max(1, white_bottom_y - white_top_y + 1)
+                                    max_gap = max(3, int(white_height * 2))
+                                else:
+                                    print(f"⚠️ White indicator not found (top={white_top_y}, bottom={white_bottom_y}) in real area w={real_width}, h={real_height}")
+                                    max_gap = max(3, int(real_height * 0.2))
+
+                                # Find dark sections (fish position) in real_img
+                                dark_sections = []
+                                current_section_start = None
+                                gap_counter = 0
+                                for row_idx in range(real_height):
+                                    has_dark = False
+                                    for col_idx in range(real_width):
+                                        b, g, r = real_img[row_idx, col_idx, 0:3]
+                                        rb, gb, bb = int(r), int(g), int(b)
+                                        if self._is_dark_pixel((rb, gb, bb)):
+                                            has_dark = True
+                                            break
+                                    if has_dark:
+                                        gap_counter = 0
+                                        if current_section_start is None:
+                                            current_section_start = real_y + row_idx
+                                    else:
+                                        if current_section_start is not None:
+                                            gap_counter += 1
+                                            if gap_counter > max_gap:
+                                                section_end = real_y + row_idx - gap_counter
+                                                section_height = section_end - current_section_start + 1
+                                                # Filter: ignore noise sections smaller than 8px
+                                                if section_height >= 8:
+                                                    dark_sections.append({'start': current_section_start, 'end': section_end, 'middle': (current_section_start + section_end) // 2})
+                                                current_section_start = None
+                                                gap_counter = 0
+                                if current_section_start is not None:
+                                    section_end = real_y + real_height - 1 - gap_counter
+                                    section_height = section_end - current_section_start + 1
+                                    # Filter: ignore noise sections smaller than 8px
+                                    if section_height >= 8:
+                                        dark_sections.append({'start': current_section_start, 'end': section_end, 'middle': (current_section_start + section_end) // 2})
+
+                                # PD control once signals present
+                                if dark_sections and white_top_y is not None:
+                                    if first_detection_time is None:
+                                        first_detection_time = time.time()
+                                    stable_frames += 1
+
+                                    if (not control_armed and
+                                        stable_frames >= 2 and
+                                        time.time() - cast_time >= MIN_CONTROL_DELAY):
+                                        control_armed = True
+                                        was_detecting = True
+                                        print('Fish detected! Starting control...')
+                                        self.app.set_recovery_state("fishing", {"action": "fish_control_active"})
+
+                                    if not control_armed:
+                                        if self.app.is_clicking:
+                                            try:
+                                                self.mouse.release(pynput_mouse.Button.left)
+                                            except Exception:
+                                                pass
+                                            self.app.is_clicking = False
+                                        time.sleep(0.05)
+                                        continue
+
+                                    for section in dark_sections:
+                                        section['size'] = section['end'] - section['start'] + 1
+                                    largest_section = max(dark_sections, key=lambda s: s['size'])
+
+                                    raw_error = largest_section['middle'] - white_top_y
+                                    normalized_error = raw_error / real_height if real_height > 0 else raw_error
+
+                                    # Smooth the error to avoid jitter from single noisy frames
+                                    self.error_smoothing.append(normalized_error)
+                                    if len(self.error_smoothing) > 5:
+                                        self.error_smoothing.pop(0)
+                                    smoothed_error = sum(self.error_smoothing) / len(self.error_smoothing)
+
+                                    now = time.time()
+                                    if self.app.previous_error_time is None:
+                                        self.app.previous_error_time = now
+                                    dt = max(0.05, now - self.app.previous_error_time)  # clamp to avoid huge derivative spikes
+
+                                    derivative_raw = (smoothed_error - self.app.previous_error) / dt
+                                    derivative = max(-0.5, min(0.5, derivative_raw))
+
+                                    self.app.previous_error = smoothed_error
                                     self.app.previous_error_time = now
-                                dt = max(0.05, now - self.app.previous_error_time)  # clamp to avoid huge derivative spikes
 
-                                derivative_raw = (smoothed_error - self.app.previous_error) / dt
-                                derivative = max(-0.5, min(0.5, derivative_raw))
+                                    pd_output = self.app.kp * smoothed_error + self.app.kd * derivative
 
-                                self.app.previous_error = smoothed_error
-                                self.app.previous_error_time = now
+                                    switch_deadband = 0.012  # prevents chatter around zero
 
-                                pd_output = self.app.kp * smoothed_error + self.app.kd * derivative
+                                    print(f'Error: {raw_error}px (norm={smoothed_error:.3f}), h={real_height}, dt={dt:.3f}, Kp={self.app.kp}, Kd={self.app.kd}, d={derivative:.3f}, PD: {pd_output:.3f}')
 
-                                switch_deadband = 0.012  # prevents chatter around zero
+                                    if pd_output > switch_deadband:
+                                        if not self.app.is_clicking:
+                                            try:
+                                                self.mouse.press(pynput_mouse.Button.left)
+                                            except Exception:
+                                                pass
+                                            self.app.is_clicking = True
+                                    elif pd_output < -switch_deadband:
+                                        if self.app.is_clicking:
+                                            try:
+                                                self.mouse.release(pynput_mouse.Button.left)
+                                            except Exception:
+                                                pass
+                                            self.app.is_clicking = False
+                                else:
+                                    if not dark_sections:
+                                        print(f"⚠️ No dark sections detected in real area; bar width={real_width}, height={real_height}")
+                                    if white_top_y is None:
+                                        print("⚠️ Missing white indicator; cannot compute control")
+                                    if first_detection_time is None:
+                                        first_detection_time = time.time()
+                                    stable_frames += 1
 
-                                print(f'Error: {raw_error}px (norm={smoothed_error:.3f}), h={real_height}, dt={dt:.3f}, Kp={self.app.kp}, Kd={self.app.kd}, d={derivative:.3f}, PD: {pd_output:.3f}')
+                                    if (not control_armed and
+                                        stable_frames >= 2 and
+                                        time.time() - cast_time >= MIN_CONTROL_DELAY):
+                                        control_armed = True
+                                        was_detecting = True
+                                        print('Fish detected! Starting control...')
+                                        self.app.set_recovery_state("fishing", {"action": "fish_control_active"})
 
-                                if pd_output > switch_deadband:
-                                    if not self.app.is_clicking:
-                                        try:
-                                            self.mouse.press(pynput_mouse.Button.left)
-                                        except Exception:
-                                            pass
-                                        self.app.is_clicking = True
-                                elif pd_output < -switch_deadband:
-                                    if self.app.is_clicking:
-                                        try:
-                                            self.mouse.release(pynput_mouse.Button.left)
-                                        except Exception:
-                                            pass
-                                        self.app.is_clicking = False
+                                    if not control_armed:
+                                        if self.app.is_clicking:
+                                            try:
+                                                self.mouse.release(pynput_mouse.Button.left)
+                                            except Exception:
+                                                pass
+                                            self.app.is_clicking = False
+                                        time.sleep(0.05)
+                                        continue
+
+                                    # No secondary control path here; fall back to next iteration
+
+                                time.sleep(0.1)
+
+                            self.app.set_recovery_state("idle", {"action": "detection_complete"})
+                            if was_detecting or detected:
+                                cycle_complete = True
+                                break
+
+                        except Exception as e:
+                            print(f'🚨 Main loop error: {e}')
+                            import traceback
+                            traceback.print_exc()
+                            self.app.log(f'Main loop error: {e}', "error")
+                            if not self.force_stop_flag:
+                                time.sleep(1.0)
                             else:
-                                if not dark_sections:
-                                    print(f"⚠️ No dark sections detected in real area; bar width={real_width}, height={real_height}")
-                                if white_top_y is None:
-                                    print("⚠️ Missing white indicator; cannot compute control")
-                                if first_detection_time is None:
-                                    first_detection_time = time.time()
-                                stable_frames += 1
+                                break  # Exit immediately on force stop
 
-                                if (not control_armed and
-                                    stable_frames >= 2 and
-                                    time.time() - cast_time >= MIN_CONTROL_DELAY):
-                                    control_armed = True
-                                    was_detecting = True
-                                    print('Fish detected! Starting control...')
-                                    self.app.set_recovery_state("fishing", {"action": "fish_control_active"})
-
-                                if not control_armed:
-                                    if self.app.is_clicking:
-                                        try:
-                                            self.mouse.release(pynput_mouse.Button.left)
-                                        except Exception:
-                                            pass
-                                        self.app.is_clicking = False
-                                    time.sleep(0.05)
-                                    continue
-
-                                # No secondary control path here; fall back to next iteration
-                            
-                            time.sleep(0.1)
-                        
-                        self.app.set_recovery_state("idle", {"action": "detection_complete"})
-                        
-                    except Exception as e:
-                        print(f'🚨 Main loop error: {e}')
-                        import traceback
-                        traceback.print_exc()
-                        self.app.log(f'Main loop error: {e}', "error")
-                        if not self.force_stop_flag:
-                            time.sleep(1.0)
-                        else:
-                            break  # Exit immediately on force stop
+                    # End of attempts for this cycle; if both attempts failed, stop to avoid spam
+                    if not cycle_complete and cast_attempts >= max_cast_attempts:
+                        print('⏸️ Max cast attempts reached without detection; stopping to prevent spam. Toggle start to retry.')
+                        self.app.main_loop_active = False
+                        break
         
         except Exception as e:
             self.app.log(f'🚨 Critical main loop error: {e}', "error")
