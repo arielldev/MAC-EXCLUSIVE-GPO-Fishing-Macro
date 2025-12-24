@@ -755,6 +755,8 @@ class FishingBot:
         self.error_smoothing = []  # Smooth error values for stability
         self.fishing_success_rate = 0.8  # Track success rate for adaptive timeouts
         self.recent_catches = []  # Track recent fishing attempts
+        self.app.previous_error = 0.0
+        self.app.previous_error_time = None
         
         # Reset recovery count on fresh start
         if not self.recovery_in_progress:
@@ -834,6 +836,9 @@ class FishingBot:
                         # Allow one global auto-locate attempt per cycle
                         global_bar_search_attempted = False
                         override_bar_area = None
+                        self.error_smoothing.clear()
+                        self.app.previous_error = 0.0
+                        self.app.previous_error_time = None
                         
                         while self.app.main_loop_active and not self.force_stop_flag:
                             # Update heartbeat frequently during detection
@@ -1249,20 +1254,38 @@ class FishingBot:
 
                                 raw_error = largest_section['middle'] - white_top_y
                                 normalized_error = raw_error / real_height if real_height > 0 else raw_error
-                                derivative = normalized_error - self.app.previous_error
-                                self.app.previous_error = normalized_error
-                                pd_output = self.app.kp * normalized_error + self.app.kd * derivative
 
-                                print(f'Error: {raw_error}px (norm={normalized_error:.3f}), h={real_height}, Kp={self.app.kp}, PD: {pd_output:.2f}')
+                                # Smooth the error to avoid jitter from single noisy frames
+                                self.error_smoothing.append(normalized_error)
+                                if len(self.error_smoothing) > 5:
+                                    self.error_smoothing.pop(0)
+                                smoothed_error = sum(self.error_smoothing) / len(self.error_smoothing)
 
-                                if pd_output > 0:
+                                now = time.time()
+                                if self.app.previous_error_time is None:
+                                    self.app.previous_error_time = now
+                                dt = max(0.05, now - self.app.previous_error_time)  # clamp to avoid huge derivative spikes
+
+                                derivative_raw = (smoothed_error - self.app.previous_error) / dt
+                                derivative = max(-0.5, min(0.5, derivative_raw))
+
+                                self.app.previous_error = smoothed_error
+                                self.app.previous_error_time = now
+
+                                pd_output = self.app.kp * smoothed_error + self.app.kd * derivative
+
+                                switch_deadband = 0.012  # prevents chatter around zero
+
+                                print(f'Error: {raw_error}px (norm={smoothed_error:.3f}), h={real_height}, dt={dt:.3f}, Kp={self.app.kp}, Kd={self.app.kd}, d={derivative:.3f}, PD: {pd_output:.3f}')
+
+                                if pd_output > switch_deadband:
                                     if not self.app.is_clicking:
                                         try:
                                             self.mouse.press(pynput_mouse.Button.left)
                                         except Exception:
                                             pass
                                         self.app.is_clicking = True
-                                else:
+                                elif pd_output < -switch_deadband:
                                     if self.app.is_clicking:
                                         try:
                                             self.mouse.release(pynput_mouse.Button.left)
