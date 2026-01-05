@@ -1346,10 +1346,14 @@ Sequence (per user spec):
             except Exception:
                 pass
 
-        # Unhook all keyboard events
+        # Unhook all keyboard events (Windows-specific, skip on macOS/Linux)
         try:
-            keyboard.unhook_all()
-        except Exception:
+            # Only attempt unhook_all if the keyboard module was imported (Windows-only)
+            import keyboard
+            if hasattr(keyboard, 'unhook_all'):
+                keyboard.unhook_all()
+        except (AttributeError, ImportError, Exception):
+            # Not available on macOS/Linux or not imported
             pass
 
         # Destroy main root window

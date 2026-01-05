@@ -81,7 +81,12 @@ class LayoutManager:
     def load_layout_settings(self):
         """Load layout settings from file"""
         try:
-            settings_file = "layout_settings.json"
+            # Use os.path.join for cross-platform path handling
+            settings_file = os.path.join(os.path.dirname(__file__), "..", "layout_settings.json")
+            # Also check in current directory for backward compatibility
+            if not os.path.exists(settings_file):
+                settings_file = "layout_settings.json"
+                
             if os.path.exists(settings_file):
                 with open(settings_file, 'r') as f:
                     data = json.load(f)
@@ -102,6 +107,12 @@ class LayoutManager:
     def save_layout_settings(self):
         """Save layout settings to file"""
         try:
+            # Use os.path.join for cross-platform path handling
+            settings_file = os.path.join(os.path.dirname(__file__), "..", "layout_settings.json")
+            # Also try current directory for backward compatibility
+            if not os.path.dirname(settings_file) or not os.path.exists(os.path.dirname(settings_file)):
+                settings_file = "layout_settings.json"
+                
             settings_data = {
                 "current_layout": self.current_layout,
                 "layout_areas": {
@@ -110,7 +121,7 @@ class LayoutManager:
                 }
             }
             
-            with open("layout_settings.json", 'w') as f:
+            with open(settings_file, 'w') as f:
                 json.dump(settings_data, f, indent=2)
             
         except Exception as e:

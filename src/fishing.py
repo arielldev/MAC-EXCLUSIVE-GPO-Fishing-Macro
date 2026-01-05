@@ -4,6 +4,8 @@ import mss
 import numpy as np
 import cv2
 import platform
+import os
+import logging
 from pynput import mouse as pynput_mouse
 from pynput import keyboard as pynput_keyboard
 from pynput.keyboard import Key
@@ -14,7 +16,10 @@ class FishingBot:
         # macOS controllers (use app's controllers if available)
         self.mouse = getattr(app, 'mouse_controller', pynput_mouse.Controller())
         self.keyboard = getattr(app, 'keyboard_controller', pynput_keyboard.Controller())
-        self._retina_scale = 1.0
+        
+        # macOS Retina display support: detect and apply DPI scaling
+        self._retina_scale = self._detect_retina_scale()
+        
         self.recovery_in_progress = False
         self.watchdog_active = False
         self.watchdog_thread = None
@@ -22,6 +27,41 @@ class FishingBot:
         self.force_stop_flag = False
         self.last_fruit_spawn_time = 0  # Track when last fruit spawn was detected
         self.fruit_spawn_cooldown = 15 * 60  # 15 minutes cooldown after detecting spawn
+    
+    def _detect_retina_scale(self):
+        """Detect macOS Retina display scaling (2.0 for 2x Retina, 1.0 for normal)"""
+        try:
+            is_mac = platform.system() == 'Darwin'
+            if not is_mac:
+                return 1.0
+            
+            # Try to detect Retina display using tkinter
+            try:
+                import tkinter as tk
+                root = tk.Tk()
+                root.withdraw()
+                # On Retina displays, this returns 2.0
+                scale = root.call('tk', 'scaling')
+                root.destroy()
+                if scale >= 2.0:
+                    logging.info(f"✅ macOS Retina display detected (scale: {scale})")
+                    return scale
+            except Exception as e:
+                logging.debug(f"Could not detect Retina scale via tkinter: {e}")
+                # Fallback: check if we can determine screen DPI from environment
+                try:
+                    import subprocess
+                    result = subprocess.run(['system_profiler', 'SPDisplaysDataType'], 
+                                          capture_output=True, text=True, timeout=2)
+                    if 'Retina' in result.stdout:
+                        logging.info("✅ macOS Retina display likely detected")
+                        return 2.0
+                except Exception:
+                    pass
+        except Exception as e:
+            logging.debug(f"Retina scale detection failed: {e}")
+        
+        return 1.0
 
     # --- Color helpers (more tolerant than exact equality) ---
     def _matches_color(self, rgb_tuple, target_rgb, tol=28):

@@ -118,13 +118,48 @@ class OverlayManager:
         return None
     
     def _update_cursor(self, event):
+        import platform
         edge = self._get_resize_edge(event.x, event.y)
-        # Use cross-platform cursor names compatible with macOS
-        cursor_map = {'nw': 'top_left_corner', 'ne': 'top_right_corner', 
-                     'sw': 'bottom_left_corner', 'se': 'bottom_right_corner', 
-                     'n': 'sb_v_double_arrow', 's': 'sb_v_double_arrow', 
-                     'e': 'sb_h_double_arrow', 'w': 'sb_h_double_arrow', None: 'arrow'}
-        self.window.config(cursor=cursor_map.get(edge, 'arrow'))
+        
+        # Use cross-platform cursor names compatible with macOS and Windows
+        # macOS uses different cursor names than Windows/Linux
+        is_mac = platform.system() == 'Darwin'
+        
+        if is_mac:
+            # macOS cursor names
+            cursor_map = {
+                'nw': 'top_left_corner', 
+                'ne': 'top_right_corner', 
+                'sw': 'bottom_left_corner', 
+                'se': 'bottom_right_corner', 
+                'n': 'sb_v_double_arrow', 
+                's': 'sb_v_double_arrow', 
+                'e': 'sb_h_double_arrow', 
+                'w': 'sb_h_double_arrow', 
+                None: 'arrow'
+            }
+        else:
+            # Windows/Linux cursor names
+            cursor_map = {
+                'nw': 'size_nw_se', 
+                'ne': 'size_ne_sw', 
+                'sw': 'size_ne_sw', 
+                'se': 'size_nw_se', 
+                'n': 'size_ns', 
+                's': 'size_ns', 
+                'e': 'size_ew', 
+                'w': 'size_ew', 
+                None: 'arrow'
+            }
+        
+        try:
+            self.window.config(cursor=cursor_map.get(edge, 'arrow'))
+        except Exception:
+            # Fallback to arrow cursor if specified cursor is not available
+            try:
+                self.window.config(cursor='arrow')
+            except Exception:
+                pass
     
     def _start_action(self, event):
         self.drag_data['x'] = event.x

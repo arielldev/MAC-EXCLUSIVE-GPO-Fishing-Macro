@@ -14,8 +14,8 @@ from datetime import datetime
 class UpdateManager:
     def __init__(self, app):
         self.app = app
-        self.repo_url = "https://api.github.com/repos/arielldev/gpo-fishing/commits/main"
-        self.download_url = "https://github.com/arielldev/gpo-fishing/archive/refs/heads/main.zip"
+        self.repo_url = "https://api.github.com/repos/arielldev/MAC-EXCLUSIVE-GPO-Fishing-Macro/commits/main"
+        self.download_url = "https://github.com/arielldev/MAC-EXCLUSIVE-GPO-Fishing-Macro/archive/refs/heads/main.zip"
         self.last_check = 0
         self.check_interval = 300  # 5 minutes
         
