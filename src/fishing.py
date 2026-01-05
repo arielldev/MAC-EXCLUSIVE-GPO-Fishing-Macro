@@ -1034,82 +1034,9 @@ class FishingBot:
                                     time.sleep(0.1)
                                     continue
 
-                                # Use the full user-defined bar layout as the bar region (simpler, robust)
-                                found_first = True
-                                point1_x = x
-                                point1_y = y
-                                point2_x = x + width - 1
+                                # Proceed to detect dark and white sections in the bar area
+                                # (Don't prematurely set detected=True here - just verify bar area is valid)
 
-                                if found_first:
-                                    detected = True
-                                else:
-                                    # No blue bar found
-                                    # Try one-time global auto-locate if overlay area might be wrong
-                                    if (not detected and not global_bar_search_attempted and
-                                        time.time() - cast_time > 0.7):
-                                        try:
-                                            auto_area = self.auto_locate_bar_area(sct, target_color)
-                                            global_bar_search_attempted = True
-                                            if auto_area:
-                                                override_bar_area = auto_area
-                                                # Continue loop to re-scan with new area
-                                                time.sleep(0.05)
-                                                continue
-                                            else:
-                                                print('⚠️ Global auto-locate did not find the bar. Continuing...')
-                                        except Exception as e:
-                                            print(f'⚠️ Global search error: {e}')
-
-                                    if not detected and time.time() - cast_time > self.app.scan_timeout:
-                                        print(f'Cast timeout after {self.app.scan_timeout}s, recasting...')
-                                        # Reselect bait in case we ran out (recovery feature)
-                                        if hasattr(self.app, 'bait_manager') and self.app.bait_manager.is_enabled():
-                                            print("🔄 Reselecting bait (may have run out)")
-                                            self.app.bait_manager.select_top_bait()
-                                        # Ensure no mouse press sticks between casts
-                                        if self.app.is_clicking:
-                                            try:
-                                                self.mouse.release(pynput_mouse.Button.left)
-                                            except Exception:
-                                                pass
-                                            self.app.is_clicking = False
-                                        time.sleep(0.3)
-                                        break
-
-                                    if was_detecting:
-                                        print('Fish caught! Processing...')
-
-                                        # Clean up mouse state immediately
-                                        if self.app.is_clicking:
-                                            try:
-                                                self.mouse.release(pynput_mouse.Button.left)
-                                            except Exception:
-                                                pass
-                                            self.app.is_clicking = False
-
-                                        # Track successful catch for adaptive learning
-                                        self.recent_catches.append(True)
-                                        if len(self.recent_catches) > 10:
-                                            self.recent_catches.pop(0)
-                                        self.fishing_success_rate = sum(self.recent_catches) / len(self.recent_catches)
-
-                                        # Increment fish counter when fish is actually caught
-                                        self.app.increment_fish_counter()
-                                        consecutive_recasts = 0
-
-                                        # Complete post-catch workflow
-                                        self.process_post_catch_workflow()
-
-                                        time.sleep(self.app.wait_after_loss)
-                                        was_detecting = False
-                                        self.check_and_purchase()
-                                        # Continue to next fishing cycle
-                                        success_pct = int(self.fishing_success_rate * 100)
-                                        print(f'🐟 Fish processing complete | Success Rate: {success_pct}%')
-                                        break
-
-                                    time.sleep(0.1)
-                                    continue
 
                                 # Right edge is the bar layout's right boundary
                                 # (We rely on white/dark detection inside this window.)
