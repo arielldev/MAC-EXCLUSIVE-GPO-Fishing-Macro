@@ -861,6 +861,8 @@ class FishingBot:
                                 self.app.is_clicking = False
 
                             self.app.set_recovery_state("casting", {"action": "initial_cast"})
+                            # Log cast attempt to help diagnose "no cast" reports
+                            print('🕹️ Performing cast_line() call')
                             self.cast_line()
                             cast_time = time.time()
 
@@ -879,6 +881,7 @@ class FishingBot:
                             print('Scanning for blue fishing bar...')
 
                             detection_start_time = time.time()
+                            logged_bar_info = False  # debug: log bar area once per cycle
                             last_spawn_check = time.time()
                             spawn_check_interval = 4.0  # Check for spawns every 4 seconds (lightweight)
                             # Allow one global auto-locate attempt per cycle
@@ -988,6 +991,9 @@ class FishingBot:
                                     y = bar_area['y']
                                     width = bar_area['width']
                                     height = bar_area['height']
+                                    if not logged_bar_info:
+                                        print(f"[DEBUG] Using bar area x={x}, y={y}, w={width}, h={height}, target_color={target_color}")
+                                        logged_bar_info = True
                                     # Scale coordinates for macOS Retina (logical -> pixels)
                                     monitor_px = {
                                         'left': int(x * self._retina_scale),
@@ -1256,10 +1262,17 @@ class FishingBot:
                                                 pass
                                             self.app.is_clicking = False
                                 else:
-                                    if not dark_sections:
-                                        print(f"⚠️ No dark sections detected in real area; bar width={real_width}, height={real_height}")
-                                    if white_top_y is None:
-                                        print("⚠️ Missing white indicator; cannot compute control")
+                                    if not dark_sections or white_top_y is None:
+                                        # Log one detailed failure sample to help diagnose "no meter detected"
+                                        sample_pix = None
+                                        try:
+                                            center_y = real_height // 2
+                                            center_x = real_width // 2
+                                            b, g, r = real_img[center_y, center_x, 0:3]
+                                            sample_pix = (int(r), int(g), int(b))
+                                        except Exception:
+                                            pass
+                                        print(f"⚠️ Bar detect miss: dark_sections={len(dark_sections)}, white_top_y={white_top_y}, sample_pixel={sample_pix}, area=({real_width}x{real_height})")
                                     if first_detection_time is None:
                                         first_detection_time = time.time()
                                     stable_frames += 1
@@ -1301,10 +1314,14 @@ class FishingBot:
                             else:
                                 break  # Exit immediately on force stop
 
-                    # End of attempts for this cycle; if both attempts failed, stop to avoid spam
+                    # End of attempts for this cycle; if attempts failed, rest briefly and retry instead of stopping fully
                     if not cycle_complete and cast_attempts >= max_cast_attempts:
-                        print('⏸️ Max cast attempts reached without detection; stopping to prevent spam. Toggle start to retry.')
-                        self.app.main_loop_active = False
+                        print('⏸️ Max cast attempts reached without detection; pausing 2s then retrying to avoid stop loops.')
+                        # Reset attempt counter so loop keeps trying
+                        cast_attempts = 0
+                        time.sleep(2.0)
+                        # Continue outer while loop (main_loop_active remains True)
+                        continue
                         break
         
         except Exception as e:
