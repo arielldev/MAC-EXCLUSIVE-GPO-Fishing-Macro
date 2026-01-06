@@ -244,6 +244,13 @@ class HotkeyGUI:
             from webhook import WebhookManager
         self.webhook_manager = WebhookManager(self)
         
+        # Initialize update manager
+        try:
+            from src.updater import UpdateManager
+        except ImportError:
+            from updater import UpdateManager
+        self.update_manager = UpdateManager(self)
+        
         # Initialize overlay manager
         try:
             from src.overlay import OverlayManager
@@ -430,6 +437,12 @@ class HotkeyGUI:
                                       command=self.open_settings_window, style='TButton')
         self.settings_btn.pack(side=tk.LEFT, padx=(0, 8))
         ToolTip(self.settings_btn, "Open timing settings and theme options")
+        
+        # Update button
+        self.update_btn = ttk.Button(left_controls, text='🔄 Update', 
+                                     command=self.check_for_updates, style='TButton')
+        self.update_btn.pack(side=tk.LEFT, padx=(0, 8))
+        ToolTip(self.update_btn, "Check for updates from GitHub")
         
         current_row += 1
         
@@ -2245,6 +2258,15 @@ Sequence (per user spec):
         except Exception as e:
             self.status_msg.config(text=f'Error opening Discord: {e}', foreground='red')
 
+    def check_for_updates(self):
+        """Check for updates from GitHub"""
+        if hasattr(self, 'update_manager'):
+            # Run update check in a separate thread to avoid blocking UI
+            import threading
+            update_thread = threading.Thread(target=self.update_manager.check_for_updates_manual, daemon=True)
+            update_thread.start()
+        else:
+            self.update_status('Update manager not initialized', 'error', '❌')
     
     def update_status(self, message, status_type='info', icon=''):
         """Update status message from UpdateManager"""
