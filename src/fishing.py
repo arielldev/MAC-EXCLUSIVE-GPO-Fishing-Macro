@@ -1137,61 +1137,67 @@ class FishingBot:
                                 white_top_y = None
                                 white_bottom_y = None
                                 indicator_rows = []
-                                min_row_hits = max(3, int(real_width * 0.02))  # require at least 2% of row pixels
+                                min_row_hits = max(3, int(real_width * 0.03))  # require at least 3% of row pixels for stability
                                 for row_idx in range(real_height):
                                     hits = 0
                                     for col_idx in range(real_width):
-                                        b, g, r = real_img[row_idx, col_idx, 0:3]
-                                        rb, gb, bb = int(r), int(g), int(b)
-                                        if self._is_indicator_pixel((rb, gb, bb)):
+                                        r, g, b = real_img[row_idx, col_idx, 0:3]
+                                        if self._is_indicator_pixel((r, g, b)):
                                             hits += 1
                                     if hits >= min_row_hits:
                                         indicator_rows.append(real_y + row_idx)
 
                                 if indicator_rows:
-                                    white_top_y = indicator_rows[0]
+                                    # Use middle of indicator band for more stable targeting instead of top
+                                    white_top_y = (indicator_rows[0] + indicator_rows[-1]) // 2
                                     white_bottom_y = indicator_rows[-1]
-
-                                if white_top_y is not None and white_bottom_y is not None:
-                                    white_height = max(1, white_bottom_y - white_top_y + 1)
-                                    max_gap = max(3, int(white_height * 2))
                                 else:
-                                    print(f"⚠️ White indicator not found (top={white_top_y}, bottom={white_bottom_y}) in real area w={real_width}, h={real_height}")
-                                    max_gap = max(3, int(real_height * 0.2))
+                                    print(f"⚠️ Indicator not found in real area w={real_width}, h={real_height}")
 
-                                # Find dark sections (fish position) in real_img
+                                # Find dark sections (fish position) with improved robustness
                                 dark_sections = []
                                 current_section_start = None
-                                gap_counter = 0
+                                
                                 for row_idx in range(real_height):
                                     has_dark = False
+                                    # Check if this row has any dark pixels
                                     for col_idx in range(real_width):
-                                        b, g, r = real_img[row_idx, col_idx, 0:3]
-                                        rb, gb, bb = int(r), int(g), int(b)
-                                        if self._is_dark_pixel((rb, gb, bb)):
+                                        r, g, b = real_img[row_idx, col_idx, 0:3]
+                                        if self._is_dark_pixel((r, g, b)):
                                             has_dark = True
                                             break
+                                    
                                     if has_dark:
-                                        gap_counter = 0
                                         if current_section_start is None:
                                             current_section_start = real_y + row_idx
                                     else:
+                                        # End of dark section
                                         if current_section_start is not None:
-                                            gap_counter += 1
-                                            if gap_counter > max_gap:
-                                                section_end = real_y + row_idx - gap_counter
-                                                section_height = section_end - current_section_start + 1
-                                                # Filter: ignore noise sections smaller than 8px
-                                                if section_height >= 8:
-                                                    dark_sections.append({'start': current_section_start, 'end': section_end, 'middle': (current_section_start + section_end) // 2})
-                                                current_section_start = None
-                                                gap_counter = 0
+                                            section_end = real_y + row_idx - 1
+                                            section_height = section_end - current_section_start + 1
+                                            # Only keep substantial sections (ignore noise < 15px)
+                                            if section_height >= 15:
+                                                section_middle = (current_section_start + section_end) // 2
+                                                dark_sections.append({
+                                                    'start': current_section_start,
+                                                    'end': section_end,
+                                                    'middle': section_middle,
+                                                    'size': section_height
+                                                })
+                                            current_section_start = None
+                                
+                                # Handle final section if file ends with dark
                                 if current_section_start is not None:
-                                    section_end = real_y + real_height - 1 - gap_counter
+                                    section_end = real_y + real_height - 1
                                     section_height = section_end - current_section_start + 1
-                                    # Filter: ignore noise sections smaller than 8px
-                                    if section_height >= 8:
-                                        dark_sections.append({'start': current_section_start, 'end': section_end, 'middle': (current_section_start + section_end) // 2})
+                                    if section_height >= 15:
+                                        section_middle = (current_section_start + section_end) // 2
+                                        dark_sections.append({
+                                            'start': current_section_start,
+                                            'end': section_end,
+                                            'middle': section_middle,
+                                            'size': section_height
+                                        })
 
                                 # PD control once signals present
                                 if dark_sections and white_top_y is not None:
@@ -1225,25 +1231,28 @@ class FishingBot:
                                     normalized_error = raw_error / real_height if real_height > 0 else raw_error
 
                                     # Smooth the error to avoid jitter from single noisy frames
+                                    # Use larger window (10 frames) for more stable averaging
                                     self.error_smoothing.append(normalized_error)
-                                    if len(self.error_smoothing) > 5:
+                                    if len(self.error_smoothing) > 10:
                                         self.error_smoothing.pop(0)
                                     smoothed_error = sum(self.error_smoothing) / len(self.error_smoothing)
 
                                     now = time.time()
                                     if self.app.previous_error_time is None:
                                         self.app.previous_error_time = now
-                                    dt = max(0.05, now - self.app.previous_error_time)  # clamp to avoid huge derivative spikes
+                                    dt = max(0.08, now - self.app.previous_error_time)  # slightly longer minimum dt
 
+                                    # Derivative with gentler clamping to avoid overshooting
                                     derivative_raw = (smoothed_error - self.app.previous_error) / dt
-                                    derivative = max(-0.5, min(0.5, derivative_raw))
+                                    derivative = max(-0.3, min(0.3, derivative_raw))
 
                                     self.app.previous_error = smoothed_error
                                     self.app.previous_error_time = now
 
                                     pd_output = self.app.kp * smoothed_error + self.app.kd * derivative
 
-                                    switch_deadband = 0.012  # prevents chatter around zero
+                                    # Larger deadband (0.035) to reduce constant chatter and jerky movement
+                                    switch_deadband = 0.035
 
                                     print(f'Error: {raw_error}px (norm={smoothed_error:.3f}), h={real_height}, dt={dt:.3f}, Kp={self.app.kp}, Kd={self.app.kd}, d={derivative:.3f}, PD: {pd_output:.3f}')
 
