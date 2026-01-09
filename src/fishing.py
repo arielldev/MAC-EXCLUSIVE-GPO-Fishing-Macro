@@ -1251,8 +1251,9 @@ class FishingBot:
 
                                     pd_output = self.app.kp * smoothed_error + self.app.kd * derivative
 
-                                    # Larger deadband (0.035) to reduce constant chatter and jerky movement
-                                    switch_deadband = 0.035
+                                    # Smaller deadband (0.018) - allows action at lower PD outputs
+                                    # With Kp=0.5, this triggers at ~3.6% normalized error
+                                    switch_deadband = 0.018
 
                                     print(f'Error: {raw_error}px (norm={smoothed_error:.3f}), h={real_height}, dt={dt:.3f}, Kp={self.app.kp}, Kd={self.app.kd}, d={derivative:.3f}, PD: {pd_output:.3f}')
 
