@@ -1142,7 +1142,7 @@ class FishingBot:
                                 white_top_y = None
                                 white_bottom_y = None
                                 indicator_rows = []
-                                min_row_hits = max(3, int(real_width * 0.02))  # require at least 2% of row pixels
+                                min_row_hits = max(2, int(real_width * 0.015))  # RELAXED: only 1.5% of pixels needed (was 2%)
                                 for row_idx in range(real_height):
                                     hits = 0
                                     for col_idx in range(real_width):
@@ -1230,26 +1230,29 @@ class FishingBot:
                                         self.last_white_top_y = white_top_y
                                         self.detection_stability_count = 1
                                     else:
-                                        # Only accept large changes (>5px) or gradual drift
+                                        # Only reject HUGE jumps (>15px), allow normal fish movement
                                         position_change = abs(white_top_y - self.last_white_top_y)
-                                        if position_change > 5 and self.detection_stability_count < 3:
-                                            # Don't jump - keep previous position for stability
-                                            white_top_y = self.last_white_top_y
+                                        if position_change > 15 and self.detection_stability_count < 2:
+                                            # Huge jump - smooth it out
+                                            white_top_y = int(0.8 * self.last_white_top_y + 0.2 * white_top_y)
                                         else:
-                                            # Update with exponential moving average for smoothness
-                                            white_top_y = int(0.7 * white_top_y + 0.3 * self.last_white_top_y)
-                                            self.last_white_top_y = white_top_y
-                                            self.detection_stability_count = min(5, self.detection_stability_count + 1)
+                                            # Small/normal changes - respond quickly with light smoothing
+                                            white_top_y = int(0.9 * white_top_y + 0.1 * self.last_white_top_y)
+                                        self.last_white_top_y = white_top_y
+                                        self.detection_stability_count = min(3, self.detection_stability_count + 1)
 
                                     # Apply hysteresis to dark section position
                                     if self.last_dark_middle is None:
                                         self.last_dark_middle = largest_section['middle']
                                     else:
-                                        # Smooth dark section position to prevent jitter
+                                        # Smooth dark section position - respond to movement but not noise
                                         dark_change = abs(largest_section['middle'] - self.last_dark_middle)
-                                        if dark_change > 10:
-                                            # Don't jump - use smoothed position
-                                            largest_section['middle'] = int(0.6 * self.last_dark_middle + 0.4 * largest_section['middle'])
+                                        if dark_change > 20:
+                                            # Large jump - smooth heavily
+                                            largest_section['middle'] = int(0.7 * self.last_dark_middle + 0.3 * largest_section['middle'])
+                                        else:
+                                            # Normal movement - respond quickly
+                                            largest_section['middle'] = int(0.95 * largest_section['middle'] + 0.05 * self.last_dark_middle)
                                         self.last_dark_middle = largest_section['middle']
 
                                     raw_error = largest_section['middle'] - white_top_y
