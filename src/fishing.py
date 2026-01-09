@@ -1210,16 +1210,6 @@ class FishingBot:
                                         print('Fish detected! Starting control...')
                                         self.app.set_recovery_state("fishing", {"action": "fish_control_active"})
 
-                                    if not control_armed:
-                                        if self.app.is_clicking:
-                                            try:
-                                                self.mouse.release(pynput_mouse.Button.left)
-                                            except Exception:
-                                                pass
-                                            self.app.is_clicking = False
-                                        time.sleep(0.05)
-                                        continue
-
                                     for section in dark_sections:
                                         section['size'] = section['end'] - section['start'] + 1
                                     largest_section = max(dark_sections, key=lambda s: s['size'])
@@ -1283,14 +1273,24 @@ class FishingBot:
 
                                     print(f'Error: {raw_error}px (norm={smoothed_error:.3f}), h={real_height}, dt={dt:.3f}, Kp={self.app.kp}, Kd={self.app.kd}, d={derivative:.3f}, PD: {pd_output:.3f}')
 
-                                    if pd_output > switch_deadband:
-                                        if not self.app.is_clicking:
-                                            try:
-                                                self.mouse.press(pynput_mouse.Button.left)
-                                            except Exception:
-                                                pass
-                                            self.app.is_clicking = True
-                                    elif pd_output < -switch_deadband:
+                                    # ONLY perform control if we've armed it (stable detection)
+                                    if control_armed:
+                                        if pd_output > switch_deadband:
+                                            if not self.app.is_clicking:
+                                                try:
+                                                    self.mouse.press(pynput_mouse.Button.left)
+                                                except Exception:
+                                                    pass
+                                                self.app.is_clicking = True
+                                        elif pd_output < -switch_deadband:
+                                            if self.app.is_clicking:
+                                                try:
+                                                    self.mouse.release(pynput_mouse.Button.left)
+                                                except Exception:
+                                                    pass
+                                                self.app.is_clicking = False
+                                    else:
+                                        # Control not armed yet - release mouse if pressed
                                         if self.app.is_clicking:
                                             try:
                                                 self.mouse.release(pynput_mouse.Button.left)
@@ -1313,25 +1313,12 @@ class FishingBot:
                                         first_detection_time = time.time()
                                     stable_frames += 1
 
-                                    if (not control_armed and
-                                        stable_frames >= 2 and
-                                        time.time() - cast_time >= MIN_CONTROL_DELAY):
-                                        control_armed = True
-                                        was_detecting = True
-                                        print('Fish detected! Starting control...')
-                                        self.app.set_recovery_state("fishing", {"action": "fish_control_active"})
-
-                                    if not control_armed:
-                                        if self.app.is_clicking:
-                                            try:
-                                                self.mouse.release(pynput_mouse.Button.left)
-                                            except Exception:
-                                                pass
-                                            self.app.is_clicking = False
-                                        time.sleep(0.05)
-                                        continue
-
-                                    # No secondary control path here; fall back to next iteration
+                                    if self.app.is_clicking:
+                                        try:
+                                            self.mouse.release(pynput_mouse.Button.left)
+                                        except Exception:
+                                            pass
+                                        self.app.is_clicking = False
 
                                 time.sleep(0.1)
 
